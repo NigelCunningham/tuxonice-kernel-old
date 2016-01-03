@@ -198,7 +198,7 @@ struct pci_dev;
 
 int acpi_pci_irq_enable (struct pci_dev *dev);
 void acpi_penalize_isa_irq(int irq, int active);
-
+void acpi_penalize_sci_irq(int irq, int trigger, int polarity);
 void acpi_pci_irq_disable (struct pci_dev *dev);
 
 extern int ec_read(u8 addr, u8 *val);
@@ -331,9 +331,6 @@ int acpi_check_region(resource_size_t start, resource_size_t n,
 		      const char *name);
 
 int acpi_resources_are_enforced(void);
-
-int acpi_reserve_region(u64 start, unsigned int length, u8 space_id,
-			unsigned long flags, char *desc);
 
 #ifdef CONFIG_HIBERNATION
 void __init acpi_no_s4_hw_signature(void);
@@ -528,13 +525,6 @@ static inline int acpi_check_region(resource_size_t start, resource_size_t n,
 				    const char *name)
 {
 	return 0;
-}
-
-static inline int acpi_reserve_region(u64 start, unsigned int length,
-				      u8 space_id, unsigned long flags,
-				      char *desc)
-{
-	return -ENXIO;
 }
 
 struct acpi_table_header;
