@@ -10,7 +10,7 @@
 
 #ifndef RTC_PORT
 #define RTC_PORT(x)	(0x70 + (x))
-#define RTC_ALWAYS_BCD	1	/* RTC operates in binary mode */
+#define RTC_ALWAYS_BCD	0	/* RTC operates in binary mode */
 #endif
 
 #if defined(CONFIG_X86_32)
