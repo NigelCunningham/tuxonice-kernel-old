@@ -2095,10 +2095,17 @@ EXPORT_SYMBOL(generic_make_request);
  */
 blk_qc_t submit_bio(int rw, struct bio *bio)
 {
+        int warned = 0;
+
 	bio->bi_rw |= rw;
 
-	if (unlikely(trap_non_toi_io))
-		BUG_ON(!bio_flagged(bio, BIO_TOI));
+	while (unlikely(trap_non_toi_io && !bio_flagged(bio, BIO_TOI))) {
+            if (!warned) {
+                WARN_ON(1);
+                warned = 1;
+            }
+            schedule_timeout_interruptible(msecs_to_jiffies(100));
+        }
 
 	/*
 	 * If it's a regular read/write or a barrier with data attached,
