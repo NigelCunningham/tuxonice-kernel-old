@@ -254,7 +254,14 @@ static int radeon_info_ioctl(struct drm_device *dev, void *data, struct drm_file
 		}
 		break;
 	case RADEON_INFO_ACCEL_WORKING2:
-		*value = rdev->accel_working;
+		if (rdev->family == CHIP_HAWAII) {
+			if (rdev->accel_working)
+				*value = 2;
+			else
+				*value = 0;
+		} else {
+			*value = rdev->accel_working;
+		}
 		break;
 	case RADEON_INFO_TILING_CONFIG:
 		if (rdev->family >= CHIP_BONAIRE)
@@ -587,14 +594,14 @@ int radeon_driver_open_kms(struct drm_device *dev, struct drm_file *file_priv)
 			return -ENOMEM;
 		}
 
-		vm = &fpriv->vm;
-		r = radeon_vm_init(rdev, vm);
-		if (r) {
-			kfree(fpriv);
-			return r;
-		}
-
 		if (rdev->accel_working) {
+			vm = &fpriv->vm;
+			r = radeon_vm_init(rdev, vm);
+			if (r) {
+				kfree(fpriv);
+				return r;
+			}
+
 			r = radeon_bo_reserve(rdev->ring_tmp_bo.bo, false);
 			if (r) {
 				radeon_vm_fini(rdev, vm);
@@ -652,9 +659,9 @@ void radeon_driver_postclose_kms(struct drm_device *dev,
 					radeon_vm_bo_rmv(rdev, vm->ib_bo_va);
 				radeon_bo_unreserve(rdev->ring_tmp_bo.bo);
 			}
+			radeon_vm_fini(rdev, vm);
 		}
 
-		radeon_vm_fini(rdev, vm);
 		kfree(fpriv);
 		file_priv->driver_priv = NULL;
 	}
@@ -784,6 +791,8 @@ int radeon_get_vblank_timestamp_kms(struct drm_device *dev, int crtc,
 
 	/* Get associated drm_crtc: */
 	drmcrtc = &rdev->mode_info.crtcs[crtc]->base;
+	if (!drmcrtc)
+		return -EINVAL;
 
 	/* Helper routine in DRM core does all the work: */
 	return drm_calc_vbltimestamp_from_scanoutpos(dev, crtc, max_error,

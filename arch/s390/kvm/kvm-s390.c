@@ -429,7 +429,9 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	if (!kvm->arch.sca)
 		goto out_err;
 	spin_lock(&kvm_lock);
-	sca_offset = (sca_offset + 16) & 0x7f0;
+	sca_offset += 16;
+	if (sca_offset + sizeof(struct sca_block) > PAGE_SIZE)
+		sca_offset = 0;
 	kvm->arch.sca = (struct sca_block *) ((char *) kvm->arch.sca + sca_offset);
 	spin_unlock(&kvm_lock);
 
@@ -646,7 +648,7 @@ int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
 		if (rc)
 			return rc;
 	}
-	hrtimer_init(&vcpu->arch.ckc_timer, CLOCK_REALTIME, HRTIMER_MODE_ABS);
+	hrtimer_init(&vcpu->arch.ckc_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	tasklet_init(&vcpu->arch.tasklet, kvm_s390_tasklet,
 		     (unsigned long) vcpu);
 	vcpu->arch.ckc_timer.function = kvm_s390_idle_wakeup;
@@ -1285,19 +1287,6 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 		sigprocmask(SIG_SETMASK, &vcpu->sigset, &sigsaved);
 
 	kvm_s390_vcpu_start(vcpu);
-
-	switch (kvm_run->exit_reason) {
-	case KVM_EXIT_S390_SIEIC:
-	case KVM_EXIT_UNKNOWN:
-	case KVM_EXIT_INTR:
-	case KVM_EXIT_S390_RESET:
-	case KVM_EXIT_S390_UCONTROL:
-	case KVM_EXIT_S390_TSCH:
-	case KVM_EXIT_DEBUG:
-		break;
-	default:
-		BUG();
-	}
 
 	vcpu->arch.sie_block->gpsw.mask = kvm_run->psw_mask;
 	vcpu->arch.sie_block->gpsw.addr = kvm_run->psw_addr;

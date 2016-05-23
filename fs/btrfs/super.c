@@ -902,6 +902,15 @@ find_root:
 	if (IS_ERR(new_root))
 		return ERR_CAST(new_root);
 
+	if (!(sb->s_flags & MS_RDONLY)) {
+		int ret;
+		down_read(&fs_info->cleanup_work_sem);
+		ret = btrfs_orphan_cleanup(new_root);
+		up_read(&fs_info->cleanup_work_sem);
+		if (ret)
+			return ERR_PTR(ret);
+	}
+
 	dir_id = btrfs_root_dirid(&new_root->root_item);
 setup_root:
 	location.objectid = dir_id;
@@ -1194,7 +1203,9 @@ static struct dentry *mount_subvol(const char *subvol_name, int flags,
 				return ERR_CAST(mnt);
 			}
 
+			down_write(&mnt->mnt_sb->s_umount);
 			r = btrfs_remount(mnt->mnt_sb, &flags, NULL);
+			up_write(&mnt->mnt_sb->s_umount);
 			if (r < 0) {
 				/* FIXME: release vfsmount mnt ??*/
 				kfree(newargs);

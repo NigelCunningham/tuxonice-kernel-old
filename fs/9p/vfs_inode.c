@@ -451,9 +451,9 @@ void v9fs_evict_inode(struct inode *inode)
 {
 	struct v9fs_inode *v9inode = V9FS_I(inode);
 
-	truncate_inode_pages_final(inode->i_mapping);
+	truncate_inode_pages_final(&inode->i_data);
 	clear_inode(inode);
-	filemap_fdatawrite(inode->i_mapping);
+	filemap_fdatawrite(&inode->i_data);
 
 	v9fs_cache_inode_put_cookie(inode);
 	/* clunk the fid stashed in writeback_fid */
@@ -540,8 +540,7 @@ static struct inode *v9fs_qid_iget(struct super_block *sb,
 	unlock_new_inode(inode);
 	return inode;
 error:
-	unlock_new_inode(inode);
-	iput(inode);
+	iget_failed(inode);
 	return ERR_PTR(retval);
 
 }

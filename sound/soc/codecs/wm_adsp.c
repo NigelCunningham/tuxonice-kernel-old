@@ -246,7 +246,7 @@ static int wm_adsp_fw_get(struct snd_kcontrol *kcontrol,
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 	struct wm_adsp *adsp = snd_soc_codec_get_drvdata(codec);
 
-	ucontrol->value.integer.value[0] = adsp[e->shift_l].fw;
+	ucontrol->value.enumerated.item[0] = adsp[e->shift_l].fw;
 
 	return 0;
 }
@@ -258,16 +258,16 @@ static int wm_adsp_fw_put(struct snd_kcontrol *kcontrol,
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 	struct wm_adsp *adsp = snd_soc_codec_get_drvdata(codec);
 
-	if (ucontrol->value.integer.value[0] == adsp[e->shift_l].fw)
+	if (ucontrol->value.enumerated.item[0] == adsp[e->shift_l].fw)
 		return 0;
 
-	if (ucontrol->value.integer.value[0] >= WM_ADSP_NUM_FW)
+	if (ucontrol->value.enumerated.item[0] >= WM_ADSP_NUM_FW)
 		return -EINVAL;
 
 	if (adsp[e->shift_l].running)
 		return -EBUSY;
 
-	adsp[e->shift_l].fw = ucontrol->value.integer.value[0];
+	adsp[e->shift_l].fw = ucontrol->value.enumerated.item[0];
 
 	return 0;
 }
@@ -1355,6 +1355,7 @@ static int wm_adsp_load_coeff(struct wm_adsp *dsp)
 			  file, blocks, pos - firmware->size);
 
 out_fw:
+	regmap_async_complete(regmap);
 	release_firmware(firmware);
 	wm_adsp_buf_free(&buf_list);
 out:
@@ -1758,3 +1759,5 @@ int wm_adsp2_init(struct wm_adsp *adsp, bool dvfs)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(wm_adsp2_init);
+
+MODULE_LICENSE("GPL v2");

@@ -100,6 +100,7 @@ static int radeon_process_aux_ch(struct radeon_i2c_chan *chan,
 	memset(&args, 0, sizeof(args));
 
 	mutex_lock(&chan->mutex);
+	mutex_lock(&rdev->mode_info.atom_context->scratch_mutex);
 
 	base = (unsigned char *)(rdev->mode_info.atom_context->scratch + 1);
 
@@ -113,7 +114,7 @@ static int radeon_process_aux_ch(struct radeon_i2c_chan *chan,
 	if (ASIC_IS_DCE4(rdev))
 		args.v2.ucHPD_ID = chan->rec.hpd;
 
-	atom_execute_table(rdev->mode_info.atom_context, index, (uint32_t *)&args);
+	atom_execute_table_scratch_unlocked(rdev->mode_info.atom_context, index, (uint32_t *)&args);
 
 	*ack = args.v1.ucReplyStatus;
 
@@ -147,6 +148,7 @@ static int radeon_process_aux_ch(struct radeon_i2c_chan *chan,
 
 	r = recv_bytes;
 done:
+	mutex_unlock(&rdev->mode_info.atom_context->scratch_mutex);
 	mutex_unlock(&chan->mutex);
 
 	return r;
@@ -169,8 +171,9 @@ radeon_dp_aux_transfer(struct drm_dp_aux *aux, struct drm_dp_aux_msg *msg)
 		return -E2BIG;
 
 	tx_buf[0] = msg->address & 0xff;
-	tx_buf[1] = msg->address >> 8;
-	tx_buf[2] = msg->request << 4;
+	tx_buf[1] = (msg->address >> 8) & 0xff;
+	tx_buf[2] = (msg->request << 4) |
+		((msg->address >> 16) & 0xf);
 	tx_buf[3] = msg->size ? (msg->size - 1) : 0;
 
 	switch (msg->request & ~DP_AUX_I2C_MOT) {
@@ -493,6 +496,10 @@ int radeon_dp_mode_valid_helper(struct drm_connector *connector,
 	struct radeon_connector_atom_dig *dig_connector;
 	int dp_clock;
 
+	if ((mode->clock > 340000) &&
+	    (!radeon_connector_is_dp12_capable(connector)))
+		return MODE_CLOCK_HIGH;
+
 	if (!radeon_connector->con_priv)
 		return MODE_CLOCK_HIGH;
 	dig_connector = radeon_connector->con_priv;
@@ -620,10 +627,8 @@ static int radeon_dp_link_train_init(struct radeon_dp_link_train_info *dp_info)
 		drm_dp_dpcd_writeb(dp_info->aux,
 				   DP_DOWNSPREAD_CTRL, 0);
 
-	if ((dp_info->connector->connector_type == DRM_MODE_CONNECTOR_eDP) &&
-	    (dig->panel_mode == DP_PANEL_MODE_INTERNAL_DP2_MODE)) {
+	if (dig->panel_mode == DP_PANEL_MODE_INTERNAL_DP2_MODE)
 		drm_dp_dpcd_writeb(dp_info->aux, DP_EDP_CONFIGURATION_SET, 1);
-	}
 
 	/* set the lane count on the sink */
 	tmp = dp_info->dp_lane_count;

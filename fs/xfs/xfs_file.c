@@ -295,7 +295,16 @@ xfs_file_read_iter(
 				xfs_rw_iunlock(ip, XFS_IOLOCK_EXCL);
 				return ret;
 			}
-			truncate_pagecache_range(VFS_I(ip), pos, -1);
+
+			/*
+			 * Invalidate whole pages. This can return an error if
+			 * we fail to invalidate a page, but this should never
+			 * happen on XFS. Warn if it does fail.
+			 */
+			ret = invalidate_inode_pages2_range(VFS_I(ip)->i_mapping,
+						pos >> PAGE_CACHE_SHIFT, -1);
+			WARN_ON_ONCE(ret);
+			ret = 0;
 		}
 		xfs_rw_ilock_demote(ip, XFS_IOLOCK_EXCL);
 	}
@@ -352,7 +361,8 @@ STATIC int				/* error (positive) */
 xfs_zero_last_block(
 	struct xfs_inode	*ip,
 	xfs_fsize_t		offset,
-	xfs_fsize_t		isize)
+	xfs_fsize_t		isize,
+	bool			*did_zeroing)
 {
 	struct xfs_mount	*mp = ip->i_mount;
 	xfs_fileoff_t		last_fsb = XFS_B_TO_FSBT(mp, isize);
@@ -380,6 +390,7 @@ xfs_zero_last_block(
 	zero_len = mp->m_sb.sb_blocksize - zero_offset;
 	if (isize + zero_len > offset)
 		zero_len = offset - isize;
+	*did_zeroing = true;
 	return xfs_iozero(ip, isize, zero_len);
 }
 
@@ -398,7 +409,8 @@ int					/* error (positive) */
 xfs_zero_eof(
 	struct xfs_inode	*ip,
 	xfs_off_t		offset,		/* starting I/O offset */
-	xfs_fsize_t		isize)		/* current inode size */
+	xfs_fsize_t		isize,		/* current inode size */
+	bool			*did_zeroing)
 {
 	struct xfs_mount	*mp = ip->i_mount;
 	xfs_fileoff_t		start_zero_fsb;
@@ -420,7 +432,7 @@ xfs_zero_eof(
 	 * We only zero a part of that block so it is handled specially.
 	 */
 	if (XFS_B_FSB_OFFSET(mp, isize) != 0) {
-		error = xfs_zero_last_block(ip, offset, isize);
+		error = xfs_zero_last_block(ip, offset, isize, did_zeroing);
 		if (error)
 			return error;
 	}
@@ -480,6 +492,7 @@ xfs_zero_eof(
 		if (error)
 			return error;
 
+		*did_zeroing = true;
 		start_zero_fsb = imap.br_startoff + imap.br_blockcount;
 		ASSERT(start_zero_fsb <= (end_zero_fsb + 1));
 	}
@@ -518,13 +531,15 @@ restart:
 	 * having to redo all checks before.
 	 */
 	if (*pos > i_size_read(inode)) {
+		bool	zero = false;
+
 		if (*iolock == XFS_IOLOCK_SHARED) {
 			xfs_rw_iunlock(ip, *iolock);
 			*iolock = XFS_IOLOCK_EXCL;
 			xfs_rw_ilock(ip, *iolock);
 			goto restart;
 		}
-		error = -xfs_zero_eof(ip, *pos, i_size_read(inode));
+		error = -xfs_zero_eof(ip, *pos, i_size_read(inode), &zero);
 		if (error)
 			return error;
 	}
@@ -634,7 +649,15 @@ xfs_file_dio_aio_write(
 						    pos, -1);
 		if (ret)
 			goto out;
-		truncate_pagecache_range(VFS_I(ip), pos, -1);
+		/*
+		 * Invalidate whole pages. This can return an error if
+		 * we fail to invalidate a page, but this should never
+		 * happen on XFS. Warn if it does fail.
+		 */
+		ret = invalidate_inode_pages2_range(VFS_I(ip)->i_mapping,
+						pos >> PAGE_CACHE_SHIFT, -1);
+		WARN_ON_ONCE(ret);
+		ret = 0;
 	}
 
 	/*

@@ -643,7 +643,7 @@ static int fib6_commit_metrics(struct dst_entry *dst,
 	if (dst->flags & DST_HOST) {
 		mp = dst_metrics_write_ptr(dst);
 	} else {
-		mp = kzalloc(sizeof(u32) * RTAX_MAX, GFP_KERNEL);
+		mp = kzalloc(sizeof(u32) * RTAX_MAX, GFP_ATOMIC);
 		if (!mp)
 			return -ENOMEM;
 		dst_init_metrics(dst, mp, 0);
@@ -662,6 +662,29 @@ static int fib6_commit_metrics(struct dst_entry *dst,
 	return 0;
 }
 
+static void fib6_purge_rt(struct rt6_info *rt, struct fib6_node *fn,
+			  struct net *net)
+{
+	if (atomic_read(&rt->rt6i_ref) != 1) {
+		/* This route is used as dummy address holder in some split
+		 * nodes. It is not leaked, but it still holds other resources,
+		 * which must be released in time. So, scan ascendant nodes
+		 * and replace dummy references to this route with references
+		 * to still alive ones.
+		 */
+		while (fn) {
+			if (!(fn->fn_flags & RTN_RTINFO) && fn->leaf == rt) {
+				fn->leaf = fib6_find_prefix(net, fn);
+				atomic_inc(&fn->leaf->rt6i_ref);
+				rt6_release(rt);
+			}
+			fn = fn->parent;
+		}
+		/* No more references are possible at this point. */
+		BUG_ON(atomic_read(&rt->rt6i_ref) != 1);
+	}
+}
+
 /*
  *	Insert routing information in a node.
  */
@@ -671,6 +694,7 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
 {
 	struct rt6_info *iter = NULL;
 	struct rt6_info **ins;
+	struct rt6_info **fallback_ins = NULL;
 	int replace = (info->nlh &&
 		       (info->nlh->nlmsg_flags & NLM_F_REPLACE));
 	int add = (!info->nlh ||
@@ -694,8 +718,13 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
 			    (info->nlh->nlmsg_flags & NLM_F_EXCL))
 				return -EEXIST;
 			if (replace) {
-				found++;
-				break;
+				if (rt_can_ecmp == rt6_qualify_for_ecmp(iter)) {
+					found++;
+					break;
+				}
+				if (rt_can_ecmp)
+					fallback_ins = fallback_ins ?: ins;
+				goto next_iter;
 			}
 
 			if (iter->dst.dev == rt->dst.dev &&
@@ -731,7 +760,15 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
 		if (iter->rt6i_metric > rt->rt6i_metric)
 			break;
 
+next_iter:
 		ins = &iter->dst.rt6_next;
+	}
+
+	if (fallback_ins && !found) {
+		/* No ECMP-able route found, replace first non-ECMP one */
+		ins = fallback_ins;
+		iter = *ins;
+		found++;
 	}
 
 	/* Reset round-robin state, if necessary */
@@ -794,6 +831,8 @@ add:
 		}
 
 	} else {
+		int nsiblings;
+
 		if (!found) {
 			if (add)
 				goto add;
@@ -810,10 +849,30 @@ add:
 		rt->dst.rt6_next = iter->dst.rt6_next;
 		atomic_inc(&rt->rt6i_ref);
 		inet6_rt_notify(RTM_NEWROUTE, rt, info);
-		rt6_release(iter);
 		if (!(fn->fn_flags & RTN_RTINFO)) {
 			info->nl_net->ipv6.rt6_stats->fib_route_nodes++;
 			fn->fn_flags |= RTN_RTINFO;
+		}
+		nsiblings = iter->rt6i_nsiblings;
+		fib6_purge_rt(iter, fn, info->nl_net);
+		rt6_release(iter);
+
+		if (nsiblings) {
+			/* Replacing an ECMP route, remove all siblings */
+			ins = &rt->dst.rt6_next;
+			iter = *ins;
+			while (iter) {
+				if (rt6_qualify_for_ecmp(iter)) {
+					*ins = iter->dst.rt6_next;
+					fib6_purge_rt(iter, fn, info->nl_net);
+					rt6_release(iter);
+					nsiblings--;
+				} else {
+					ins = &iter->dst.rt6_next;
+				}
+				iter = *ins;
+			}
+			WARN_ON(nsiblings != 0);
 		}
 	}
 
@@ -1324,24 +1383,7 @@ static void fib6_del_route(struct fib6_node *fn, struct rt6_info **rtp,
 		fn = fib6_repair_tree(net, fn);
 	}
 
-	if (atomic_read(&rt->rt6i_ref) != 1) {
-		/* This route is used as dummy address holder in some split
-		 * nodes. It is not leaked, but it still holds other resources,
-		 * which must be released in time. So, scan ascendant nodes
-		 * and replace dummy references to this route with references
-		 * to still alive ones.
-		 */
-		while (fn) {
-			if (!(fn->fn_flags & RTN_RTINFO) && fn->leaf == rt) {
-				fn->leaf = fib6_find_prefix(net, fn);
-				atomic_inc(&fn->leaf->rt6i_ref);
-				rt6_release(rt);
-			}
-			fn = fn->parent;
-		}
-		/* No more references are possible at this point. */
-		BUG_ON(atomic_read(&rt->rt6i_ref) != 1);
-	}
+	fib6_purge_rt(rt, fn, net);
 
 	inet6_rt_notify(RTM_DELROUTE, rt, info);
 	rt6_release(rt);
@@ -1605,6 +1647,24 @@ static void fib6_prune_clones(struct net *net, struct fib6_node *fn)
 	fib6_clean_tree(net, fn, fib6_prune_clone, 1, NULL);
 }
 
+static int fib6_update_sernum(struct rt6_info *rt, void *arg)
+{
+	__u32 sernum = *(__u32 *)arg;
+
+	if (rt->rt6i_node &&
+	    rt->rt6i_node->fn_sernum != sernum)
+		rt->rt6i_node->fn_sernum = sernum;
+
+	return 0;
+}
+
+static void fib6_flush_trees(struct net *net)
+{
+	__u32 new_sernum = fib6_new_sernum();
+
+	fib6_clean_all(net, fib6_update_sernum, &new_sernum);
+}
+
 /*
  *	Garbage collection
  */
@@ -1788,6 +1848,8 @@ int __init fib6_init(void)
 			      NULL);
 	if (ret)
 		goto out_unregister_subsys;
+
+	__fib6_flush_trees = fib6_flush_trees;
 out:
 	return ret;
 

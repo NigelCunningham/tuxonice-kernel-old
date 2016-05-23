@@ -72,6 +72,11 @@ void radeon_connector_hotplug(struct drm_connector *connector)
 			if (!radeon_hpd_sense(rdev, radeon_connector->hpd.hpd)) {
 				drm_helper_connector_dpms(connector, DRM_MODE_DPMS_OFF);
 			} else if (radeon_dp_needs_link_train(radeon_connector)) {
+				/* Don't try to start link training before we
+				 * have the dpcd */
+				if (!radeon_dp_getdpcd(radeon_connector))
+					return;
+
 				/* set it to OFF so that drm_helper_connector_dpms()
 				 * won't return immediately since the current state
 				 * is ON at this point.
@@ -695,6 +700,8 @@ static int radeon_lvds_mode_valid(struct drm_connector *connector,
 static enum drm_connector_status
 radeon_lvds_detect(struct drm_connector *connector, bool force)
 {
+	struct drm_device *dev = connector->dev;
+	struct radeon_device *rdev = dev->dev_private;
 	struct radeon_connector *radeon_connector = to_radeon_connector(connector);
 	struct drm_encoder *encoder = radeon_best_single_encoder(connector);
 	enum drm_connector_status ret = connector_status_disconnected;
@@ -711,7 +718,11 @@ radeon_lvds_detect(struct drm_connector *connector, bool force)
 		/* check if panel is valid */
 		if (native_mode->hdisplay >= 320 && native_mode->vdisplay >= 240)
 			ret = connector_status_connected;
-
+		/* don't fetch the edid from the vbios if ddc fails and runpm is
+		 * enabled so we report disconnected.
+		 */
+		if ((rdev->flags & RADEON_IS_PX) && (radeon_runtime_pm != 0))
+			ret = connector_status_disconnected;
 	}
 
 	/* check for edid as well */
@@ -1492,6 +1503,11 @@ radeon_dp_detect(struct drm_connector *connector, bool force)
 			/* check if panel is valid */
 			if (native_mode->hdisplay >= 320 && native_mode->vdisplay >= 240)
 				ret = connector_status_connected;
+			/* don't fetch the edid from the vbios if ddc fails and runpm is
+			 * enabled so we report disconnected.
+			 */
+			if ((rdev->flags & RADEON_IS_PX) && (radeon_runtime_pm != 0))
+				ret = connector_status_disconnected;
 		}
 		/* eDP is always DP */
 		radeon_dig_connector->dp_sink_type = CONNECTOR_OBJECT_ID_DISPLAYPORT;

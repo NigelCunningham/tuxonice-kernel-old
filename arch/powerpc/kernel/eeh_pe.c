@@ -570,6 +570,8 @@ static void *__eeh_pe_state_clear(void *data, void *flag)
 {
 	struct eeh_pe *pe = (struct eeh_pe *)data;
 	int state = *((int *)flag);
+	struct eeh_dev *edev, *tmp;
+	struct pci_dev *pdev;
 
 	/* Keep the state of permanently removed PE intact */
 	if ((pe->freeze_count > EEH_MAX_ALLOWED_FREEZES) &&
@@ -578,9 +580,22 @@ static void *__eeh_pe_state_clear(void *data, void *flag)
 
 	pe->state &= ~state;
 
-	/* Clear check count since last isolation */
-	if (state & EEH_PE_ISOLATED)
-		pe->check_count = 0;
+	/*
+	 * Special treatment on clearing isolated state. Clear
+	 * check count since last isolation and put all affected
+	 * devices to normal state.
+	 */
+	if (!(state & EEH_PE_ISOLATED))
+		return NULL;
+
+	pe->check_count = 0;
+	eeh_pe_for_each_dev(pe, edev, tmp) {
+		pdev = eeh_dev_to_pci_dev(edev);
+		if (!pdev)
+			continue;
+
+		pdev->error_state = pci_channel_io_normal;
+	}
 
 	return NULL;
 }
@@ -803,32 +818,29 @@ void eeh_pe_restore_bars(struct eeh_pe *pe)
 const char *eeh_pe_loc_get(struct eeh_pe *pe)
 {
 	struct pci_bus *bus = eeh_pe_bus_get(pe);
-	struct device_node *dn = pci_bus_to_OF_node(bus);
+	struct device_node *dn;
 	const char *loc = NULL;
 
-	if (!dn)
-		goto out;
+	while (bus) {
+		dn = pci_bus_to_OF_node(bus);
+		if (!dn) {
+			bus = bus->parent;
+			continue;
+		}
 
-	/* PHB PE or root PE ? */
-	if (pci_is_root_bus(bus)) {
-		loc = of_get_property(dn, "ibm,loc-code", NULL);
-		if (!loc)
+		if (pci_is_root_bus(bus))
 			loc = of_get_property(dn, "ibm,io-base-loc-code", NULL);
-		if (loc)
-			goto out;
+		else
+			loc = of_get_property(dn, "ibm,slot-location-code",
+					      NULL);
 
-		/* Check the root port */
-		dn = dn->child;
-		if (!dn)
-			goto out;
+		if (loc)
+			return loc;
+
+		bus = bus->parent;
 	}
 
-	loc = of_get_property(dn, "ibm,loc-code", NULL);
-	if (!loc)
-		loc = of_get_property(dn, "ibm,slot-location-code", NULL);
-
-out:
-	return loc ? loc : "N/A";
+	return "N/A";
 }
 
 /**

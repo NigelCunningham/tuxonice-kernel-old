@@ -909,10 +909,12 @@ static void volume_control_quirks(struct usb_mixer_elem_info *cval,
 	case USB_ID(0x046d, 0x0807): /* Logitech Webcam C500 */
 	case USB_ID(0x046d, 0x0808):
 	case USB_ID(0x046d, 0x0809):
+	case USB_ID(0x046d, 0x0819): /* Logitech Webcam C210 */
 	case USB_ID(0x046d, 0x081b): /* HD Webcam c310 */
 	case USB_ID(0x046d, 0x081d): /* HD Webcam c510 */
 	case USB_ID(0x046d, 0x0825): /* HD Webcam c270 */
 	case USB_ID(0x046d, 0x0826): /* HD Webcam c525 */
+	case USB_ID(0x046d, 0x08ca): /* Logitech Quickcam Fusion */
 	case USB_ID(0x046d, 0x0991):
 	/* Most audio usb devices lie about volume resolution.
 	 * Most Logitech webcams have res = 384.
@@ -1332,6 +1334,8 @@ static void build_feature_ctl(struct mixer_build *state, void *raw_desc,
 		}
 	}
 
+	snd_usb_mixer_fu_apply_quirk(state->mixer, cval, unitid, kctl);
+
 	range = (cval->max - cval->min) / cval->res;
 	/*
 	 * Are there devices with volume range more than 255? I use a bit more
@@ -1581,18 +1585,15 @@ static int parse_audio_mixer_unit(struct mixer_build *state, int unitid,
 			      unitid);
 		return -EINVAL;
 	}
-	/* no bmControls field (e.g. Maya44) -> ignore */
-	if (desc->bLength <= 10 + input_pins) {
-		usb_audio_dbg(state->chip, "MU %d has no bmControls field\n",
-			      unitid);
-		return 0;
-	}
 
 	num_ins = 0;
 	ich = 0;
 	for (pin = 0; pin < input_pins; pin++) {
 		err = parse_audio_unit(state, desc->baSourceID[pin]);
 		if (err < 0)
+			continue;
+		/* no bmControls field (e.g. Maya44) -> ignore */
+		if (desc->bLength <= 10 + input_pins)
 			continue;
 		err = check_input_term(state, desc->baSourceID[pin], &iterm);
 		if (err < 0)
@@ -2530,7 +2531,7 @@ static int restore_mixer_value(struct usb_mixer_elem_info *cval)
 		for (c = 0; c < MAX_CHANNELS; c++) {
 			if (!(cval->cmask & (1 << c)))
 				continue;
-			if (cval->cached & (1 << c)) {
+			if (cval->cached & (1 << (c + 1))) {
 				err = set_cur_mix_value(cval, c + 1, idx,
 							cval->cache_val[idx]);
 				if (err < 0)

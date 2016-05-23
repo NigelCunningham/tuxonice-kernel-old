@@ -350,8 +350,8 @@ static void purge_persistent_gnt(struct xen_blkif *blkif)
 		return;
 	}
 
-	if (work_pending(&blkif->persistent_purge_work)) {
-		pr_alert_ratelimited(DRV_PFX "Scheduled work from previous purge is still pending, cannot purge list\n");
+	if (work_busy(&blkif->persistent_purge_work)) {
+		pr_alert_ratelimited(DRV_PFX "Scheduled work from previous purge is still busy, cannot purge list\n");
 		return;
 	}
 
@@ -764,6 +764,7 @@ again:
 			BUG_ON(new_map_idx >= segs_to_map);
 			if (unlikely(map[new_map_idx].status != 0)) {
 				pr_debug(DRV_PFX "invalid buffer -- could not remap it\n");
+				put_free_pages(blkif, &pages[seg_idx]->page, 1);
 				pages[seg_idx]->handle = BLKBACK_INVALID_HANDLE;
 				ret |= 1;
 				goto next;
@@ -861,6 +862,8 @@ static int xen_blkbk_parse_indirect(struct blkif_request *req,
 		goto unmap;
 
 	for (n = 0, i = 0; n < nseg; n++) {
+		uint8_t first_sect, last_sect;
+
 		if ((n % SEGS_PER_INDIRECT_FRAME) == 0) {
 			/* Map indirect segments */
 			if (segments)
@@ -868,15 +871,18 @@ static int xen_blkbk_parse_indirect(struct blkif_request *req,
 			segments = kmap_atomic(pages[n/SEGS_PER_INDIRECT_FRAME]->page);
 		}
 		i = n % SEGS_PER_INDIRECT_FRAME;
+
 		pending_req->segments[n]->gref = segments[i].gref;
-		seg[n].nsec = segments[i].last_sect -
-			segments[i].first_sect + 1;
-		seg[n].offset = (segments[i].first_sect << 9);
-		if ((segments[i].last_sect >= (PAGE_SIZE >> 9)) ||
-		    (segments[i].last_sect < segments[i].first_sect)) {
+
+		first_sect = ACCESS_ONCE(segments[i].first_sect);
+		last_sect = ACCESS_ONCE(segments[i].last_sect);
+		if (last_sect >= (PAGE_SIZE >> 9) || last_sect < first_sect) {
 			rc = -EINVAL;
 			goto unmap;
 		}
+
+		seg[n].nsec = last_sect - first_sect + 1;
+		seg[n].offset = first_sect << 9;
 		preq->nr_sects += seg[n].nsec;
 	}
 

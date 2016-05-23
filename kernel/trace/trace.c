@@ -1099,13 +1099,14 @@ update_max_tr_single(struct trace_array *tr, struct task_struct *tsk, int cpu)
 }
 #endif /* CONFIG_TRACER_MAX_TRACE */
 
-static int wait_on_pipe(struct trace_iterator *iter)
+static int wait_on_pipe(struct trace_iterator *iter, bool full)
 {
 	/* Iterators are static, they should be filled or empty */
 	if (trace_buffer_iter(iter, iter->cpu_file))
 		return 0;
 
-	return ring_buffer_wait(iter->trace_buffer->buffer, iter->cpu_file);
+	return ring_buffer_wait(iter->trace_buffer->buffer, iter->cpu_file,
+				full);
 }
 
 #ifdef CONFIG_FTRACE_STARTUP_TEST
@@ -4412,15 +4413,12 @@ static int tracing_wait_pipe(struct file *filp)
 
 		mutex_unlock(&iter->mutex);
 
-		ret = wait_on_pipe(iter);
+		ret = wait_on_pipe(iter, false);
 
 		mutex_lock(&iter->mutex);
 
 		if (ret)
 			return ret;
-
-		if (signal_pending(current))
-			return -EINTR;
 	}
 
 	return 1;
@@ -4659,7 +4657,10 @@ static ssize_t tracing_splice_read_pipe(struct file *filp,
 
 	spd.nr_pages = i;
 
-	ret = splice_to_pipe(pipe, &spd);
+	if (i)
+		ret = splice_to_pipe(pipe, &spd);
+	else
+		ret = 0;
 out:
 	splice_shrink_spd(&spd);
 	return ret;
@@ -4896,7 +4897,7 @@ tracing_mark_write(struct file *filp, const char __user *ubuf,
 	*fpos += written;
 
  out_unlock:
-	for (i = 0; i < nr_pages; i++){
+	for (i = nr_pages - 1; i >= 0; i--) {
 		kunmap_atomic(map_page[i]);
 		put_page(pages[i]);
 	}
@@ -5343,14 +5344,10 @@ tracing_buffers_read(struct file *filp, char __user *ubuf,
 				goto out_unlock;
 			}
 			mutex_unlock(&trace_types_lock);
-			ret = wait_on_pipe(iter);
+			ret = wait_on_pipe(iter, false);
 			mutex_lock(&trace_types_lock);
 			if (ret) {
 				size = ret;
-				goto out_unlock;
-			}
-			if (signal_pending(current)) {
-				size = -EINTR;
 				goto out_unlock;
 			}
 			goto again;
@@ -5558,14 +5555,11 @@ tracing_buffers_splice_read(struct file *file, loff_t *ppos,
 			goto out;
 		}
 		mutex_unlock(&trace_types_lock);
-		ret = wait_on_pipe(iter);
+		ret = wait_on_pipe(iter, true);
 		mutex_lock(&trace_types_lock);
 		if (ret)
 			goto out;
-		if (signal_pending(current)) {
-			ret = -EINTR;
-			goto out;
-		}
+
 		goto again;
 	}
 
@@ -6393,7 +6387,7 @@ static int instance_mkdir (struct inode *inode, struct dentry *dentry, umode_t m
 	int ret;
 
 	/* Paranoid: Make sure the parent is the "instances" directory */
-	parent = hlist_entry(inode->i_dentry.first, struct dentry, d_alias);
+	parent = hlist_entry(inode->i_dentry.first, struct dentry, d_u.d_alias);
 	if (WARN_ON_ONCE(parent != trace_instance_dir))
 		return -ENOENT;
 
@@ -6420,7 +6414,7 @@ static int instance_rmdir(struct inode *inode, struct dentry *dentry)
 	int ret;
 
 	/* Paranoid: Make sure the parent is the "instances" directory */
-	parent = hlist_entry(inode->i_dentry.first, struct dentry, d_alias);
+	parent = hlist_entry(inode->i_dentry.first, struct dentry, d_u.d_alias);
 	if (WARN_ON_ONCE(parent != trace_instance_dir))
 		return -ENOENT;
 

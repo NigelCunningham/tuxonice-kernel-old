@@ -1173,6 +1173,9 @@ static struct aead_request *crypto_rfc4543_crypt(struct aead_request *req,
 	aead_request_set_tfm(subreq, ctx->child);
 	aead_request_set_callback(subreq, req->base.flags, crypto_rfc4543_done,
 				  req);
+	if (!enc)
+		aead_request_set_callback(subreq, req->base.flags,
+					  req->base.complete, req->base.data);
 	aead_request_set_crypt(subreq, cipher, cipher, enc ? 0 : authsize, iv);
 	aead_request_set_assoc(subreq, assoc, assoclen);
 
@@ -1441,6 +1444,7 @@ module_exit(crypto_gcm_module_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Galois/Counter Mode");
 MODULE_AUTHOR("Mikko Herranen <mh1@iki.fi>");
-MODULE_ALIAS("gcm_base");
-MODULE_ALIAS("rfc4106");
-MODULE_ALIAS("rfc4543");
+MODULE_ALIAS_CRYPTO("gcm_base");
+MODULE_ALIAS_CRYPTO("rfc4106");
+MODULE_ALIAS_CRYPTO("rfc4543");
+MODULE_ALIAS_CRYPTO("gcm");

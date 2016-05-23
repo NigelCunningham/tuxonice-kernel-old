@@ -554,16 +554,15 @@ i915_gem_userptr_get_pages(struct drm_i915_gem_object *obj)
 static void
 i915_gem_userptr_put_pages(struct drm_i915_gem_object *obj)
 {
-	struct scatterlist *sg;
-	int i;
+	struct sg_page_iter sg_iter;
 
 	BUG_ON(obj->userptr.work != NULL);
 
 	if (obj->madv != I915_MADV_WILLNEED)
 		obj->dirty = 0;
 
-	for_each_sg(obj->pages->sgl, sg, obj->pages->nents, i) {
-		struct page *page = sg_page(sg);
+	for_each_sg_page(obj->pages->sgl, &sg_iter, obj->pages->nents, 0) {
+		struct page *page = sg_page_iter_page(&sg_iter);
 
 		if (obj->dirty)
 			set_page_dirty(page);
@@ -631,7 +630,10 @@ static const struct drm_i915_gem_object_ops i915_gem_userptr_ops = {
  * Also note, that the object created here is not currently a "first class"
  * object, in that several ioctls are banned. These are the CPU access
  * ioctls: mmap(), pwrite and pread. In practice, you are expected to use
- * direct access via your pointer rather than use those ioctls.
+ * direct access via your pointer rather than use those ioctls. Another
+ * restriction is that we do not allow userptr surfaces to be pinned to the
+ * hardware and so we reject any attempt to create a framebuffer out of a
+ * userptr.
  *
  * If you think this is a good interface to use to pass GPU memory between
  * drivers, please use dma-buf instead. In fact, wherever possible use

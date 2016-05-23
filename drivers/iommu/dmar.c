@@ -677,8 +677,7 @@ static int __init dmar_acpi_dev_scope_init(void)
 				       andd->object_name);
 				continue;
 			}
-			acpi_bus_get_device(h, &adev);
-			if (!adev) {
+			if (acpi_bus_get_device(h, &adev)) {
 				pr_err("Failed to get device for ACPI object %s\n",
 				       andd->object_name);
 				continue;
@@ -1247,7 +1246,7 @@ void dmar_disable_qi(struct intel_iommu *iommu)
 
 	raw_spin_lock_irqsave(&iommu->register_lock, flags);
 
-	sts =  dmar_readq(iommu->reg + DMAR_GSTS_REG);
+	sts =  readl(iommu->reg + DMAR_GSTS_REG);
 	if (!(sts & DMA_GSTS_QIES))
 		goto end;
 

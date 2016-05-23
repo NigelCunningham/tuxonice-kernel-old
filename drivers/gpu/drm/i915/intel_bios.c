@@ -41,7 +41,7 @@ find_section(struct bdb_header *bdb, int section_id)
 {
 	u8 *base = (u8 *)bdb;
 	int index = 0;
-	u16 total, current_size;
+	u32 total, current_size;
 	u8 current_id;
 
 	/* skip to first section */
@@ -55,6 +55,10 @@ find_section(struct bdb_header *bdb, int section_id)
 
 		current_size = *((u16 *)(base + index));
 		index += 2;
+
+		/* The MIPI Sequence Block v3+ has a separate size field. */
+		if (current_id == BDB_MIPI_SEQUENCE && *(base + index) >= 3)
+			current_size = *((const u32 *)(base + index + 1));
 
 		if (index + current_size > total)
 			return NULL;
@@ -793,6 +797,12 @@ parse_mipi(struct drm_i915_private *dev_priv, struct bdb_header *bdb)
 		return;
 	}
 
+	/* Fail gracefully for forward incompatible sequence block. */
+	if (sequence->version >= 3) {
+		DRM_ERROR("Unable to parse MIPI Sequence Block v3+\n");
+		return;
+	}
+
 	DRM_DEBUG_DRIVER("Found MIPI sequence block\n");
 
 	block_size = get_blocksize(sequence);
@@ -877,7 +887,7 @@ err:
 
 	/* error during parsing so set all pointers to null
 	 * because of partial parsing */
-	memset(dev_priv->vbt.dsi.sequence, 0, MIPI_SEQ_MAX);
+	memset(dev_priv->vbt.dsi.sequence, 0, sizeof(dev_priv->vbt.dsi.sequence));
 }
 
 static void parse_ddi_port(struct drm_i915_private *dev_priv, enum port port,
@@ -1122,7 +1132,7 @@ init_vbt_defaults(struct drm_i915_private *dev_priv)
 	}
 }
 
-static int __init intel_no_opregion_vbt_callback(const struct dmi_system_id *id)
+static int intel_no_opregion_vbt_callback(const struct dmi_system_id *id)
 {
 	DRM_DEBUG_KMS("Falling back to manually reading VBT from "
 		      "VBIOS ROM for %s\n",

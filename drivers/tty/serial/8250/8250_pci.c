@@ -66,7 +66,7 @@ static void moan_device(const char *str, struct pci_dev *dev)
 	       "Please send the output of lspci -vv, this\n"
 	       "message (0x%04x,0x%04x,0x%04x,0x%04x), the\n"
 	       "manufacturer and name of serial board or\n"
-	       "modem board to rmk+serial@arm.linux.org.uk.\n",
+	       "modem board to <linux-serial@vger.kernel.org>.\n",
 	       pci_name(dev), str, dev->vendor, dev->device,
 	       dev->subsystem_vendor, dev->subsystem_device);
 }
@@ -1634,6 +1634,9 @@ static int pci_eg20t_init(struct pci_dev *dev)
 #endif
 }
 
+#define PCI_DEVICE_ID_EXAR_XR17V4358	0x4358
+#define PCI_DEVICE_ID_EXAR_XR17V8358	0x8358
+
 static int
 pci_xr17c154_setup(struct serial_private *priv,
 		  const struct pciserial_board *board,
@@ -1641,6 +1644,15 @@ pci_xr17c154_setup(struct serial_private *priv,
 {
 	port->port.flags |= UPF_EXAR_EFR;
 	return pci_default_setup(priv, board, port, idx);
+}
+
+static inline int
+xr17v35x_has_slave(struct serial_private *priv)
+{
+	const int dev_id = priv->dev->device;
+
+	return ((dev_id == PCI_DEVICE_ID_EXAR_XR17V4358) ||
+	        (dev_id == PCI_DEVICE_ID_EXAR_XR17V8358));
 }
 
 static int
@@ -1655,6 +1667,13 @@ pci_xr17v35x_setup(struct serial_private *priv,
 		return -ENOMEM;
 
 	port->port.flags |= UPF_EXAR_EFR;
+
+	/*
+	 * Setup the uart clock for the devices on expansion slot to
+	 * half the clock speed of the main chip (which is 125MHz)
+	 */
+	if (xr17v35x_has_slave(priv) && idx >= 8)
+		port->port.uartclk = (7812500 * 16 / 2);
 
 	/*
 	 * Setup Multipurpose Input/Output pins.
@@ -1790,10 +1809,17 @@ pci_wch_ch353_setup(struct serial_private *priv,
 #define PCI_DEVICE_ID_COMMTECH_4222PCIE	0x0022
 #define PCI_DEVICE_ID_BROADCOM_TRUMANAGE 0x160a
 #define PCI_DEVICE_ID_AMCC_ADDIDATA_APCI7800 0x818e
+#define PCI_DEVICE_ID_INTEL_QRK_UART	0x0936
 
 #define PCI_VENDOR_ID_SUNIX		0x1fd4
 #define PCI_DEVICE_ID_SUNIX_1999	0x1999
 
+
+#define PCI_VENDOR_ID_PERICOM			0x12D8
+#define PCI_DEVICE_ID_PERICOM_PI7C9X7951	0x7951
+#define PCI_DEVICE_ID_PERICOM_PI7C9X7952	0x7952
+#define PCI_DEVICE_ID_PERICOM_PI7C9X7954	0x7954
+#define PCI_DEVICE_ID_PERICOM_PI7C9X7958	0x7958
 
 /* Unknown vendors/cards - this should not be in linux/pci_ids.h */
 #define PCI_SUBDEVICE_ID_UNKNOWN_0x1584	0x1584
@@ -1899,6 +1925,13 @@ static struct pci_serial_quirk pci_serial_quirks[] __refdata = {
 		.subvendor	= PCI_ANY_ID,
 		.subdevice	= PCI_ANY_ID,
 		.setup		= byt_serial_setup,
+	},
+	{
+		.vendor		= PCI_VENDOR_ID_INTEL,
+		.device		= PCI_DEVICE_ID_INTEL_QRK_UART,
+		.subvendor	= PCI_ANY_ID,
+		.subdevice	= PCI_ANY_ID,
+		.setup		= pci_default_setup,
 	},
 	/*
 	 * ITE
@@ -2067,27 +2100,12 @@ static struct pci_serial_quirk pci_serial_quirks[] __refdata = {
 	 * Pericom
 	 */
 	{
-		.vendor		= 0x12d8,
-		.device		= 0x7952,
-		.subvendor	= PCI_ANY_ID,
-		.subdevice	= PCI_ANY_ID,
-		.setup		= pci_pericom_setup,
+		.vendor         = PCI_VENDOR_ID_PERICOM,
+		.device         = PCI_ANY_ID,
+		.subvendor      = PCI_ANY_ID,
+		.subdevice      = PCI_ANY_ID,
+		.setup          = pci_pericom_setup,
 	},
-	{
-		.vendor		= 0x12d8,
-		.device		= 0x7954,
-		.subvendor	= PCI_ANY_ID,
-		.subdevice	= PCI_ANY_ID,
-		.setup		= pci_pericom_setup,
-	},
-	{
-		.vendor		= 0x12d8,
-		.device		= 0x7958,
-		.subvendor	= PCI_ANY_ID,
-		.subdevice	= PCI_ANY_ID,
-		.setup		= pci_pericom_setup,
-	},
-
 	/*
 	 * PLX
 	 */
@@ -2278,6 +2296,20 @@ static struct pci_serial_quirk pci_serial_quirks[] __refdata = {
 	{
 		.vendor = PCI_VENDOR_ID_EXAR,
 		.device = PCI_DEVICE_ID_EXAR_XR17V358,
+		.subvendor	= PCI_ANY_ID,
+		.subdevice	= PCI_ANY_ID,
+		.setup		= pci_xr17v35x_setup,
+	},
+	{
+		.vendor = PCI_VENDOR_ID_EXAR,
+		.device = PCI_DEVICE_ID_EXAR_XR17V4358,
+		.subvendor	= PCI_ANY_ID,
+		.subdevice	= PCI_ANY_ID,
+		.setup		= pci_xr17v35x_setup,
+	},
+	{
+		.vendor = PCI_VENDOR_ID_EXAR,
+		.device = PCI_DEVICE_ID_EXAR_XR17V8358,
 		.subvendor	= PCI_ANY_ID,
 		.subdevice	= PCI_ANY_ID,
 		.setup		= pci_xr17v35x_setup,
@@ -2730,6 +2762,8 @@ enum pci_board_num_t {
 	pbn_exar_XR17V352,
 	pbn_exar_XR17V354,
 	pbn_exar_XR17V358,
+	pbn_exar_XR17V4358,
+	pbn_exar_XR17V8358,
 	pbn_exar_ibm_saturn,
 	pbn_pasemi_1682M,
 	pbn_ni8430_2,
@@ -2742,12 +2776,17 @@ enum pci_board_num_t {
 	pbn_ADDIDATA_PCIe_8_3906250,
 	pbn_ce4100_1_115200,
 	pbn_byt,
+	pbn_qrk,
 	pbn_omegapci,
 	pbn_NETMOS9900_2s_115200,
 	pbn_brcm_trumanage,
 	pbn_fintek_4,
 	pbn_fintek_8,
 	pbn_fintek_12,
+	pbn_pericom_PI7C9X7951,
+	pbn_pericom_PI7C9X7952,
+	pbn_pericom_PI7C9X7954,
+	pbn_pericom_PI7C9X7958,
 };
 
 /*
@@ -3398,6 +3437,22 @@ static struct pciserial_board pci_boards[] = {
 		.reg_shift	= 0,
 		.first_offset	= 0,
 	},
+	[pbn_exar_XR17V4358] = {
+		.flags		= FL_BASE0,
+		.num_ports	= 12,
+		.base_baud	= 7812500,
+		.uart_offset	= 0x400,
+		.reg_shift	= 0,
+		.first_offset	= 0,
+	},
+	[pbn_exar_XR17V8358] = {
+		.flags		= FL_BASE0,
+		.num_ports	= 16,
+		.base_baud	= 7812500,
+		.uart_offset	= 0x400,
+		.reg_shift	= 0,
+		.first_offset	= 0,
+	},
 	[pbn_exar_ibm_saturn] = {
 		.flags		= FL_BASE0,
 		.num_ports	= 1,
@@ -3492,6 +3547,12 @@ static struct pciserial_board pci_boards[] = {
 		.uart_offset	= 0x80,
 		.reg_shift      = 2,
 	},
+	[pbn_qrk] = {
+		.flags		= FL_BASE0,
+		.num_ports	= 1,
+		.base_baud	= 2764800,
+		.reg_shift	= 2,
+	},
 	[pbn_omegapci] = {
 		.flags		= FL_BASE0,
 		.num_ports	= 8,
@@ -3526,6 +3587,33 @@ static struct pciserial_board pci_boards[] = {
 		.uart_offset	= 8,
 		.base_baud	= 115200,
 		.first_offset	= 0x40,
+	},
+	/*
+	 * Pericom PI7C9X795[1248] Uno/Dual/Quad/Octal UART
+	 */
+	[pbn_pericom_PI7C9X7951] = {
+		.flags          = FL_BASE0,
+		.num_ports      = 1,
+		.base_baud      = 921600,
+		.uart_offset	= 0x8,
+	},
+	[pbn_pericom_PI7C9X7952] = {
+		.flags          = FL_BASE0,
+		.num_ports      = 2,
+		.base_baud      = 921600,
+		.uart_offset	= 0x8,
+	},
+	[pbn_pericom_PI7C9X7954] = {
+		.flags          = FL_BASE0,
+		.num_ports      = 4,
+		.base_baud      = 921600,
+		.uart_offset	= 0x8,
+	},
+	[pbn_pericom_PI7C9X7958] = {
+		.flags          = FL_BASE0,
+		.num_ports      = 8,
+		.base_baud      = 921600,
+		.uart_offset	= 0x8,
 	},
 };
 
@@ -4760,7 +4848,7 @@ static struct pci_device_id serial_pci_tbl[] = {
 		0,
 		0, pbn_exar_XR17C158 },
 	/*
-	 * Exar Corp. XR17V35[248] Dual/Quad/Octal PCIe UARTs
+	 * Exar Corp. XR17V[48]35[248] Dual/Quad/Octal/Hexa PCIe UARTs
 	 */
 	{	PCI_VENDOR_ID_EXAR, PCI_DEVICE_ID_EXAR_XR17V352,
 		PCI_ANY_ID, PCI_ANY_ID,
@@ -4774,7 +4862,33 @@ static struct pci_device_id serial_pci_tbl[] = {
 		PCI_ANY_ID, PCI_ANY_ID,
 		0,
 		0, pbn_exar_XR17V358 },
-
+	{	PCI_VENDOR_ID_EXAR, PCI_DEVICE_ID_EXAR_XR17V4358,
+		PCI_ANY_ID, PCI_ANY_ID,
+		0,
+		0, pbn_exar_XR17V4358 },
+	{	PCI_VENDOR_ID_EXAR, PCI_DEVICE_ID_EXAR_XR17V8358,
+		PCI_ANY_ID, PCI_ANY_ID,
+		0,
+		0, pbn_exar_XR17V8358 },
+	/*
+	 * Pericom PI7C9X795[1248] Uno/Dual/Quad/Octal UART
+	 */
+	{   PCI_VENDOR_ID_PERICOM, PCI_DEVICE_ID_PERICOM_PI7C9X7951,
+		PCI_ANY_ID, PCI_ANY_ID,
+		0,
+		0, pbn_pericom_PI7C9X7951 },
+	{   PCI_VENDOR_ID_PERICOM, PCI_DEVICE_ID_PERICOM_PI7C9X7952,
+		PCI_ANY_ID, PCI_ANY_ID,
+		0,
+		0, pbn_pericom_PI7C9X7952 },
+	{   PCI_VENDOR_ID_PERICOM, PCI_DEVICE_ID_PERICOM_PI7C9X7954,
+		PCI_ANY_ID, PCI_ANY_ID,
+		0,
+		0, pbn_pericom_PI7C9X7954 },
+	{   PCI_VENDOR_ID_PERICOM, PCI_DEVICE_ID_PERICOM_PI7C9X7958,
+		PCI_ANY_ID, PCI_ANY_ID,
+		0,
+		0, pbn_pericom_PI7C9X7958 },
 	/*
 	 * Topic TP560 Data/Fax/Voice 56k modem (reported by Evan Clarke)
 	 */
@@ -5193,6 +5307,12 @@ static struct pci_device_id serial_pci_tbl[] = {
 		PCI_CLASS_COMMUNICATION_SERIAL << 8, 0xff0000,
 		pbn_byt },
 
+	/*
+	 * Intel Quark x1000
+	 */
+	{	PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_QRK_UART,
+		PCI_ANY_ID, PCI_ANY_ID, 0, 0,
+		pbn_qrk },
 	/*
 	 * Cronyx Omega PCI
 	 */

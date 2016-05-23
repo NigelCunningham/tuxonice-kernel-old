@@ -904,7 +904,7 @@ void ufs_evict_inode(struct inode * inode)
 
 	if (want_delete) {
 		lock_ufs(inode->i_sb);
-		ufs_free_inode (inode);
+		ufs_free_inode(inode);
 		unlock_ufs(inode->i_sb);
 	}
 }
