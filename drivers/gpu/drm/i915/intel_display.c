@@ -4455,7 +4455,7 @@ int skl_update_scaler_crtc(struct intel_crtc_state *state)
 		      intel_crtc->base.base.id, intel_crtc->pipe, SKL_CRTC_INDEX);
 
 	return skl_update_scaler(state, !state->base.active, SKL_CRTC_INDEX,
-		&state->scaler_state.scaler_id, DRM_ROTATE_0,
+		&state->scaler_state.scaler_id, BIT(DRM_ROTATE_0),
 		state->pipe_src_w, state->pipe_src_h,
 		adjusted_mode->crtc_hdisplay, adjusted_mode->crtc_vdisplay);
 }
@@ -9793,6 +9793,8 @@ static void broadwell_set_cdclk(struct drm_device *dev, int cdclk)
 	sandybridge_pcode_write(dev_priv, HSW_PCODE_DE_WRITE_FREQ_REQ, data);
 	mutex_unlock(&dev_priv->rps.hw_lock);
 
+	I915_WRITE(CDCLK_FREQ, DIV_ROUND_CLOSEST(cdclk, 1000) - 1);
+
 	intel_update_cdclk(dev);
 
 	WARN(cdclk != dev_priv->cdclk_freq,
@@ -13429,6 +13431,9 @@ static int intel_atomic_prepare_commit(struct drm_device *dev,
 	}
 
 	for_each_crtc_in_state(state, crtc, crtc_state, i) {
+		if (state->legacy_cursor_update)
+			continue;
+
 		ret = intel_crtc_wait_for_pending_flips(crtc);
 		if (ret)
 			return ret;

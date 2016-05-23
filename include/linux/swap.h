@@ -423,7 +423,7 @@ extern struct swap_info_struct *get_swap_info_struct(unsigned);
 extern int page_swapcount(struct page *);
 extern int swp_swapcount(swp_entry_t entry);
 extern struct swap_info_struct *page_swap_info(struct page *);
-extern int reuse_swap_page(struct page *);
+extern bool reuse_swap_page(struct page *, int *);
 extern int try_to_free_swap(struct page *);
 struct backing_dev_info;
 extern void get_swap_range_of_type(int type, swp_entry_t *start,
@@ -520,8 +520,8 @@ static inline int swp_swapcount(swp_entry_t entry)
 	return 0;
 }
 
-#define reuse_swap_page(page) \
-	(!PageTransCompound(page) && page_mapcount(page) == 1)
+#define reuse_swap_page(page, total_mapcount) \
+	(page_trans_huge_mapcount(page, total_mapcount) == 1)
 
 static inline int try_to_free_swap(struct page *page)
 {
@@ -540,6 +540,10 @@ static inline swp_entry_t get_swap_page(void)
 #ifdef CONFIG_MEMCG
 static inline int mem_cgroup_swappiness(struct mem_cgroup *memcg)
 {
+	/* Cgroup2 doesn't have per-cgroup swappiness */
+	if (cgroup_subsys_on_dfl(memory_cgrp_subsys))
+		return vm_swappiness;
+
 	/* root ? */
 	if (mem_cgroup_disabled() || !memcg->css.parent)
 		return vm_swappiness;
