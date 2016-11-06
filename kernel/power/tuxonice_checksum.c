@@ -10,10 +10,10 @@
  * made to pageset 2 while we're saving it.
  */
 
+#include <crypto/hash.h>
 #include <linux/suspend.h>
 #include <linux/highmem.h>
 #include <linux/vmalloc.h>
-#include <linux/crypto.h>
 #include <linux/scatterlist.h>
 
 #include "tuxonice.h"
@@ -36,9 +36,7 @@ static char toi_checksum_name[32] = "md4";
 #define CHECKSUMS_PER_PAGE ((PAGE_SIZE - sizeof(void *)) / CHECKSUM_SIZE)
 
 struct cpu_context {
-        struct crypto_hash *transform;
-        struct hash_desc desc;
-        struct scatterlist sg[2];
+        struct shash_desc *desc;
         char *buf;
 };
 
@@ -70,10 +68,12 @@ static void toi_checksum_cleanup(int ending_cycle)
         if (ending_cycle) {
                 for_each_online_cpu(cpu) {
                         struct cpu_context *this = &per_cpu(contexts, cpu);
-                        if (this->transform) {
-                                crypto_free_hash(this->transform);
-                                this->transform = NULL;
-                                this->desc.tfm = NULL;
+                        if (this->desc) {
+                                size_t size = sizeof(*this->desc) +
+                                        crypto_shash_descsize(this->desc->tfm);
+                                crypto_free_shash(this->desc->tfm);
+                                toi_kfree(26, this->desc, size);
+                                this->desc = NULL;
                         }
 
                         if (this->buf) {
@@ -106,24 +106,33 @@ static int toi_checksum_initialise(int starting_cycle)
         for_each_online_cpu(cpu) {
                 struct cpu_context *this = &per_cpu(contexts, cpu);
                 struct page *page;
+                struct crypto_shash *tfm;
+                struct shash_desc *tdesc;
 
-                this->transform = crypto_alloc_hash(toi_checksum_name, 0, 0);
-                if (IS_ERR(this->transform)) {
+
+                tfm = crypto_alloc_shash(toi_checksum_name, 0, 0);
+                if (IS_ERR(tfm)) {
                         printk(KERN_INFO "TuxOnIce: Failed to initialise the "
                                 "%s checksum algorithm: %ld.\n",
-                                toi_checksum_name, (long) this->transform);
-                        this->transform = NULL;
+                                toi_checksum_name, (long) tfm);
                         return 1;
                 }
 
-                this->desc.tfm = this->transform;
-                this->desc.flags = 0;
+                tdesc = toi_kzalloc(26, sizeof(*this->desc) + crypto_shash_descsize(tfm),
+                        GFP_KERNEL);
+
+                if (!tdesc) {
+                        printk(KERN_INFO "TuxOnIce: Failed to allocate memory "
+                                "in checksum initialisation.\n");
+                        return 1;
+                }
+                tdesc->tfm = tfm;
+                this->desc = tdesc;
 
                 page = toi_alloc_page(27, GFP_KERNEL);
                 if (!page)
                         return 1;
                 this->buf = page_address(page);
-                sg_init_one(&this->sg[0], this->buf, PAGE_SIZE);
         }
         return 0;
 }
@@ -274,10 +283,10 @@ int tuxonice_calc_checksum(struct page *page, char *checksum_locn)
         pa = kmap(page);
         memcpy(ctx->buf, pa, PAGE_SIZE);
         kunmap(page);
-        result = crypto_hash_digest(&ctx->desc, ctx->sg, PAGE_SIZE,
+        result = crypto_shash_digest(ctx->desc, ctx->buf, PAGE_SIZE,
                                                 checksum_locn);
         if (result)
-                printk(KERN_ERR "TuxOnIce checksumming: crypto_hash_digest "
+                printk(KERN_ERR "TuxOnIce checksumming: crypto_shash_digest "
                                 "returned %d.\n", result);
         return result;
 }
@@ -324,7 +333,7 @@ void check_checksums(void)
                     pa = kmap_atomic(page);
                     memcpy(ctx->buf, pa, PAGE_SIZE);
                     kunmap_atomic(pa);
-                    ret = crypto_hash_digest(&ctx->desc, ctx->sg, PAGE_SIZE,
+                    ret = crypto_shash_digest(ctx->desc, ctx->buf, PAGE_SIZE,
                             current_checksum);
 
                     if (ret) {

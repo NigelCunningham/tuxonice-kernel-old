@@ -2146,7 +2146,7 @@ static void duplicate_memory_bitmap(struct memory_bitmap *dst,
 	unsigned long pfn;
 
 	memory_bm_position_reset(src);
-	pfn = memory_bm_next_pfn(src);
+	pfn = memory_bm_next_pfn(src, 0);
 	while (pfn != BM_END_OF_MAP) {
 		memory_bm_set_bit(dst, 0, pfn);
 		pfn = memory_bm_next_pfn(src, 0);
@@ -2164,7 +2164,7 @@ static void mark_unsafe_pages(struct memory_bitmap *bm)
 	unsigned long pfn;
 
 	/* Clear the "free"/"unsafe" bit for all PFNs */
-	memory_bm_position_reset(free_pages_map, 0);
+	memory_bm_position_reset(free_pages_map);
 	pfn = memory_bm_next_pfn(free_pages_map, 0);
 	while (pfn != BM_END_OF_MAP) {
 		memory_bm_clear_current(free_pages_map, 0);
