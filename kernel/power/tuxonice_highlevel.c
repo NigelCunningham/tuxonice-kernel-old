@@ -161,7 +161,6 @@ void toi_finish_anything(int hibernate_or_resume)
                 toi_alloc_print_debug_stats();
                 atomic_inc(&snapshot_device_available);
                 unlock_system_sleep();
-                release_super_lock();
         }
 
         set_fs(oldfs);
@@ -186,7 +185,6 @@ int toi_start_anything(int hibernate_or_resume)
         toi_trace_index = 0;
 
         if (hibernate_or_resume) {
-            take_super_lock();
             lock_system_sleep();
 
                 if (!atomic_add_unless(&snapshot_device_available, -1, 0))
@@ -232,7 +230,6 @@ prehibernate_err:
 snapshotdevice_unavailable:
         if (hibernate_or_resume)
                 mutex_unlock(&pm_mutex);
-        release_super_lock();
         set_fs(oldfs);
         mutex_unlock(&tuxonice_in_use);
         return -EBUSY;
