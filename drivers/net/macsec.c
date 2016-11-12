@@ -914,7 +914,6 @@ static struct sk_buff *macsec_decrypt(struct sk_buff *skb,
 	}
 
 	macsec_skb_cb(skb)->req = req;
-	macsec_skb_cb(skb)->rx_sa = rx_sa;
 	skb->dev = dev;
 	aead_request_set_callback(req, 0, macsec_decrypt_done, skb);
 
@@ -1140,6 +1139,8 @@ static rx_handler_result_t macsec_handle_frame(struct sk_buff **pskb)
 			goto drop;
 		}
 	}
+
+	macsec_skb_cb(skb)->rx_sa = rx_sa;
 
 	/* Disabled && !changed text => skip validation */
 	if (hdr->tci_an & MACSEC_TCI_C ||
@@ -1645,7 +1646,7 @@ static int macsec_add_rxsa(struct sk_buff *skb, struct genl_info *info)
 	if (tb_sa[MACSEC_SA_ATTR_ACTIVE])
 		rx_sa->active = !!nla_get_u8(tb_sa[MACSEC_SA_ATTR_ACTIVE]);
 
-	nla_memcpy(rx_sa->key.id, tb_sa[MACSEC_SA_ATTR_KEY], MACSEC_KEYID_LEN);
+	nla_memcpy(rx_sa->key.id, tb_sa[MACSEC_SA_ATTR_KEYID], MACSEC_KEYID_LEN);
 	rx_sa->sc = rx_sc;
 	rcu_assign_pointer(rx_sc->sa[assoc_num], rx_sa);
 
@@ -1784,7 +1785,7 @@ static int macsec_add_txsa(struct sk_buff *skb, struct genl_info *info)
 		return -ENOMEM;
 	}
 
-	nla_memcpy(tx_sa->key.id, tb_sa[MACSEC_SA_ATTR_KEY], MACSEC_KEYID_LEN);
+	nla_memcpy(tx_sa->key.id, tb_sa[MACSEC_SA_ATTR_KEYID], MACSEC_KEYID_LEN);
 
 	spin_lock_bh(&tx_sa->lock);
 	tx_sa->next_pn = nla_get_u32(tb_sa[MACSEC_SA_ATTR_PN]);
@@ -2564,6 +2565,7 @@ static netdev_tx_t macsec_start_xmit(struct sk_buff *skb,
 		u64_stats_update_begin(&secy_stats->syncp);
 		secy_stats->stats.OutPktsUntagged++;
 		u64_stats_update_end(&secy_stats->syncp);
+		skb->dev = macsec->real_dev;
 		len = skb->len;
 		ret = dev_queue_xmit(skb);
 		count_tx(dev, ret, len);

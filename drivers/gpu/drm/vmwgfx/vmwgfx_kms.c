@@ -1553,14 +1553,10 @@ int vmw_du_connector_fill_modes(struct drm_connector *connector,
 		DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_PVSYNC)
 	};
 	int i;
-	u32 assumed_bpp = 2;
+	u32 assumed_bpp = 4;
 
-	/*
-	 * If using screen objects, then assume 32-bpp because that's what the
-	 * SVGA device is assuming
-	 */
-	if (dev_priv->active_display_unit == vmw_du_screen_object)
-		assumed_bpp = 4;
+	if (dev_priv->assume_16bpp)
+		assumed_bpp = 2;
 
 	if (dev_priv->active_display_unit == vmw_du_screen_target) {
 		max_width  = min(max_width,  dev_priv->stdu_max_width);
@@ -2143,13 +2139,13 @@ int vmw_kms_fbdev_init_data(struct vmw_private *dev_priv,
 void vmw_kms_del_active(struct vmw_private *dev_priv,
 			struct vmw_display_unit *du)
 {
-	lockdep_assert_held_once(&dev_priv->dev->mode_config.mutex);
-
+	mutex_lock(&dev_priv->global_kms_state_mutex);
 	if (du->active_implicit) {
 		if (--(dev_priv->num_implicit) == 0)
 			dev_priv->implicit_fb = NULL;
 		du->active_implicit = false;
 	}
+	mutex_unlock(&dev_priv->global_kms_state_mutex);
 }
 
 /**
@@ -2165,8 +2161,7 @@ void vmw_kms_add_active(struct vmw_private *dev_priv,
 			struct vmw_display_unit *du,
 			struct vmw_framebuffer *vfb)
 {
-	lockdep_assert_held_once(&dev_priv->dev->mode_config.mutex);
-
+	mutex_lock(&dev_priv->global_kms_state_mutex);
 	WARN_ON_ONCE(!dev_priv->num_implicit && dev_priv->implicit_fb);
 
 	if (!du->active_implicit && du->is_implicit) {
@@ -2174,6 +2169,7 @@ void vmw_kms_add_active(struct vmw_private *dev_priv,
 		du->active_implicit = true;
 		dev_priv->num_implicit++;
 	}
+	mutex_unlock(&dev_priv->global_kms_state_mutex);
 }
 
 /**
@@ -2190,16 +2186,13 @@ bool vmw_kms_crtc_flippable(struct vmw_private *dev_priv,
 			    struct drm_crtc *crtc)
 {
 	struct vmw_display_unit *du = vmw_crtc_to_du(crtc);
+	bool ret;
 
-	lockdep_assert_held_once(&dev_priv->dev->mode_config.mutex);
+	mutex_lock(&dev_priv->global_kms_state_mutex);
+	ret = !du->is_implicit || dev_priv->num_implicit == 1;
+	mutex_unlock(&dev_priv->global_kms_state_mutex);
 
-	if (!du->is_implicit)
-		return true;
-
-	if (dev_priv->num_implicit != 1)
-		return false;
-
-	return true;
+	return ret;
 }
 
 /**
@@ -2214,16 +2207,18 @@ void vmw_kms_update_implicit_fb(struct vmw_private *dev_priv,
 	struct vmw_display_unit *du = vmw_crtc_to_du(crtc);
 	struct vmw_framebuffer *vfb;
 
-	lockdep_assert_held_once(&dev_priv->dev->mode_config.mutex);
+	mutex_lock(&dev_priv->global_kms_state_mutex);
 
 	if (!du->is_implicit)
-		return;
+		goto out_unlock;
 
 	vfb = vmw_framebuffer_to_vfb(crtc->primary->fb);
 	WARN_ON_ONCE(dev_priv->num_implicit != 1 &&
 		     dev_priv->implicit_fb != vfb);
 
 	dev_priv->implicit_fb = vfb;
+out_unlock:
+	mutex_unlock(&dev_priv->global_kms_state_mutex);
 }
 
 /**

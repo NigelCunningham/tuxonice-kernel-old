@@ -336,15 +336,15 @@ static int geneve_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 
 	/* Need Geneve and inner Ethernet header to be present */
 	if (unlikely(!pskb_may_pull(skb, GENEVE_BASE_HLEN)))
-		goto error;
+		goto drop;
 
 	/* Return packets with reserved bits set */
 	geneveh = geneve_hdr(skb);
 	if (unlikely(geneveh->ver != GENEVE_VER))
-		goto error;
+		goto drop;
 
 	if (unlikely(geneveh->proto_type != htons(ETH_P_TEB)))
-		goto error;
+		goto drop;
 
 	gs = rcu_dereference_sk_user_data(sk);
 	if (!gs)
@@ -367,10 +367,6 @@ drop:
 	/* Consume bad packet */
 	kfree_skb(skb);
 	return 0;
-
-error:
-	/* Let the UDP layer deal with the skb */
-	return 1;
 }
 
 static struct socket *geneve_create_sock(struct net *net, bool ipv6,
@@ -1096,12 +1092,17 @@ static netdev_tx_t geneve_xmit(struct sk_buff *skb, struct net_device *dev)
 
 static int __geneve_change_mtu(struct net_device *dev, int new_mtu, bool strict)
 {
+	struct geneve_dev *geneve = netdev_priv(dev);
 	/* The max_mtu calculation does not take account of GENEVE
 	 * options, to avoid excluding potentially valid
 	 * configurations.
 	 */
-	int max_mtu = IP_MAX_MTU - GENEVE_BASE_HLEN - sizeof(struct iphdr)
-		- dev->hard_header_len;
+	int max_mtu = IP_MAX_MTU - GENEVE_BASE_HLEN - dev->hard_header_len;
+
+	if (geneve->remote.sa.sa_family == AF_INET6)
+		max_mtu -= sizeof(struct ipv6hdr);
+	else
+		max_mtu -= sizeof(struct iphdr);
 
 	if (new_mtu < 68)
 		return -EINVAL;
