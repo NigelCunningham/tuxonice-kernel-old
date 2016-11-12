@@ -938,7 +938,7 @@ static void eat_memory(void)
                 }
                 break;
         case -2:  /* Free caches only */
-                drop_pagecache();
+                iterate_supers(drop_pagecache_sb, NULL);
                 toi_recalculate_image_contents(0);
                 amount_wanted = amount_needed(1);
                 break;
