@@ -1050,6 +1050,11 @@ static int match_child(struct device *dev, void *data)
 	return !strcmp(dev_name(dev), (char *)data);
 }
 
+static void s5p_mfc_memdev_release(struct device *dev)
+{
+	dma_release_declared_memory(dev);
+}
+
 static void *mfc_get_drv_data(struct platform_device *pdev);
 
 static int s5p_mfc_alloc_memdevs(struct s5p_mfc_dev *dev)
@@ -1062,6 +1067,9 @@ static int s5p_mfc_alloc_memdevs(struct s5p_mfc_dev *dev)
 		mfc_err("Not enough memory\n");
 		return -ENOMEM;
 	}
+
+	dev_set_name(dev->mem_dev_l, "%s", "s5p-mfc-l");
+	dev->mem_dev_l->release = s5p_mfc_memdev_release;
 	device_initialize(dev->mem_dev_l);
 	of_property_read_u32_array(dev->plat_dev->dev.of_node,
 			"samsung,mfc-l", mem_info, 2);
@@ -1079,6 +1087,9 @@ static int s5p_mfc_alloc_memdevs(struct s5p_mfc_dev *dev)
 		mfc_err("Not enough memory\n");
 		return -ENOMEM;
 	}
+
+	dev_set_name(dev->mem_dev_r, "%s", "s5p-mfc-r");
+	dev->mem_dev_r->release = s5p_mfc_memdev_release;
 	device_initialize(dev->mem_dev_r);
 	of_property_read_u32_array(dev->plat_dev->dev.of_node,
 			"samsung,mfc-r", mem_info, 2);
@@ -1489,27 +1500,6 @@ static struct s5p_mfc_variant mfc_drvdata_v8 = {
 	.fw_name[0]     = "s5p-mfc-v8.fw",
 };
 
-static const struct platform_device_id mfc_driver_ids[] = {
-	{
-		.name = "s5p-mfc",
-		.driver_data = (unsigned long)&mfc_drvdata_v5,
-	}, {
-		.name = "s5p-mfc-v5",
-		.driver_data = (unsigned long)&mfc_drvdata_v5,
-	}, {
-		.name = "s5p-mfc-v6",
-		.driver_data = (unsigned long)&mfc_drvdata_v6,
-	}, {
-		.name = "s5p-mfc-v7",
-		.driver_data = (unsigned long)&mfc_drvdata_v7,
-	}, {
-		.name = "s5p-mfc-v8",
-		.driver_data = (unsigned long)&mfc_drvdata_v8,
-	},
-	{},
-};
-MODULE_DEVICE_TABLE(platform, mfc_driver_ids);
-
 static const struct of_device_id exynos_mfc_match[] = {
 	{
 		.compatible = "samsung,mfc-v5",
@@ -1531,24 +1521,18 @@ MODULE_DEVICE_TABLE(of, exynos_mfc_match);
 static void *mfc_get_drv_data(struct platform_device *pdev)
 {
 	struct s5p_mfc_variant *driver_data = NULL;
+	const struct of_device_id *match;
 
-	if (pdev->dev.of_node) {
-		const struct of_device_id *match;
-		match = of_match_node(exynos_mfc_match,
-				pdev->dev.of_node);
-		if (match)
-			driver_data = (struct s5p_mfc_variant *)match->data;
-	} else {
-		driver_data = (struct s5p_mfc_variant *)
-			platform_get_device_id(pdev)->driver_data;
-	}
+	match = of_match_node(exynos_mfc_match, pdev->dev.of_node);
+	if (match)
+		driver_data = (struct s5p_mfc_variant *)match->data;
+
 	return driver_data;
 }
 
 static struct platform_driver s5p_mfc_driver = {
 	.probe		= s5p_mfc_probe,
 	.remove		= s5p_mfc_remove,
-	.id_table	= mfc_driver_ids,
 	.driver	= {
 		.name	= S5P_MFC_NAME,
 		.pm	= &s5p_mfc_pm_ops,

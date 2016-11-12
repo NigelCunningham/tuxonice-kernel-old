@@ -581,7 +581,8 @@ xfs_sb_verify(
 	 * Only check the in progress field for the primary superblock as
 	 * mkfs.xfs doesn't clear it from secondary superblocks.
 	 */
-	return xfs_mount_validate_sb(mp, &sb, bp->b_bn == XFS_SB_DADDR,
+	return xfs_mount_validate_sb(mp, &sb,
+				     bp->b_maps[0].bm_bn == XFS_SB_DADDR,
 				     check_version);
 }
 
@@ -838,12 +839,10 @@ xfs_sync_sb(
 	struct xfs_trans	*tp;
 	int			error;
 
-	tp = _xfs_trans_alloc(mp, XFS_TRANS_SB_CHANGE, KM_SLEEP);
-	error = xfs_trans_reserve(tp, &M_RES(mp)->tr_sb, 0, 0);
-	if (error) {
-		xfs_trans_cancel(tp);
+	error = xfs_trans_alloc(mp, &M_RES(mp)->tr_sb, 0, 0,
+			XFS_TRANS_NO_WRITECOUNT, &tp);
+	if (error)
 		return error;
-	}
 
 	xfs_log_sb(tp);
 	if (wait)

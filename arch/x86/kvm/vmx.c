@@ -409,6 +409,7 @@ struct nested_vmx {
 	struct list_head vmcs02_pool;
 	int vmcs02_num;
 	u64 vmcs01_tsc_offset;
+	bool change_vmcs01_virtual_x2apic_mode;
 	/* L2 must run next, and mustn't decide to exit to L1. */
 	bool nested_run_pending;
 	/*
@@ -2072,7 +2073,8 @@ static void vmx_vcpu_pi_load(struct kvm_vcpu *vcpu, int cpu)
 	unsigned int dest;
 
 	if (!kvm_arch_has_assigned_device(vcpu->kvm) ||
-		!irq_remapping_cap(IRQ_POSTING_CAP))
+		!irq_remapping_cap(IRQ_POSTING_CAP)  ||
+		!kvm_vcpu_apicv_active(vcpu))
 		return;
 
 	do {
@@ -2180,7 +2182,8 @@ static void vmx_vcpu_pi_put(struct kvm_vcpu *vcpu)
 	struct pi_desc *pi_desc = vcpu_to_pi_desc(vcpu);
 
 	if (!kvm_arch_has_assigned_device(vcpu->kvm) ||
-		!irq_remapping_cap(IRQ_POSTING_CAP))
+		!irq_remapping_cap(IRQ_POSTING_CAP)  ||
+		!kvm_vcpu_apicv_active(vcpu))
 		return;
 
 	/* Set SN when the vCPU is preempted */
@@ -2418,7 +2421,9 @@ static void vmx_set_msr_bitmap(struct kvm_vcpu *vcpu)
 
 	if (is_guest_mode(vcpu))
 		msr_bitmap = vmx_msr_bitmap_nested;
-	else if (vcpu->arch.apic_base & X2APIC_ENABLE) {
+	else if (cpu_has_secondary_exec_ctrls() &&
+		 (vmcs_read32(SECONDARY_VM_EXEC_CONTROL) &
+		  SECONDARY_EXEC_VIRTUALIZE_X2APIC_MODE)) {
 		if (is_long_mode(vcpu))
 			msr_bitmap = vmx_msr_bitmap_longmode_x2apic;
 		else
@@ -3390,7 +3395,7 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 		}
 	}
 
-	if (cpu_has_xsaves)
+	if (boot_cpu_has(X86_FEATURE_XSAVES))
 		rdmsrl(MSR_IA32_XSS, host_xss);
 
 	return 0;
@@ -4787,6 +4792,19 @@ static void vmx_refresh_apicv_exec_ctrl(struct kvm_vcpu *vcpu)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 
 	vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, vmx_pin_based_exec_ctrl(vmx));
+	if (cpu_has_secondary_exec_ctrls()) {
+		if (kvm_vcpu_apicv_active(vcpu))
+			vmcs_set_bits(SECONDARY_VM_EXEC_CONTROL,
+				      SECONDARY_EXEC_APIC_REGISTER_VIRT |
+				      SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY);
+		else
+			vmcs_clear_bits(SECONDARY_VM_EXEC_CONTROL,
+					SECONDARY_EXEC_APIC_REGISTER_VIRT |
+					SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY);
+	}
+
+	if (cpu_has_vmx_msr_bitmap())
+		vmx_set_msr_bitmap(vcpu);
 }
 
 static u32 vmx_exec_control(struct vcpu_vmx *vmx)
@@ -5050,8 +5068,8 @@ static void vmx_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 		vmcs_write16(VIRTUAL_PROCESSOR_ID, vmx->vpid);
 
 	cr0 = X86_CR0_NW | X86_CR0_CD | X86_CR0_ET;
-	vmx_set_cr0(vcpu, cr0); /* enter rmode */
 	vmx->vcpu.arch.cr0 = cr0;
+	vmx_set_cr0(vcpu, cr0); /* enter rmode */
 	vmx_set_cr4(vcpu, 0);
 	vmx_set_efer(vcpu, 0);
 	vmx_fpu_activate(vcpu);
@@ -6333,23 +6351,20 @@ static __init int hardware_setup(void)
 
 	set_bit(0, vmx_vpid_bitmap); /* 0 is reserved for host */
 
-	if (enable_apicv) {
-		for (msr = 0x800; msr <= 0x8ff; msr++)
-			vmx_disable_intercept_msr_read_x2apic(msr);
+	for (msr = 0x800; msr <= 0x8ff; msr++)
+		vmx_disable_intercept_msr_read_x2apic(msr);
 
-		/* According SDM, in x2apic mode, the whole id reg is used.
-		 * But in KVM, it only use the highest eight bits. Need to
-		 * intercept it */
-		vmx_enable_intercept_msr_read_x2apic(0x802);
-		/* TMCCT */
-		vmx_enable_intercept_msr_read_x2apic(0x839);
-		/* TPR */
-		vmx_disable_intercept_msr_write_x2apic(0x808);
-		/* EOI */
-		vmx_disable_intercept_msr_write_x2apic(0x80b);
-		/* SELF-IPI */
-		vmx_disable_intercept_msr_write_x2apic(0x83f);
-	}
+	/* According SDM, in x2apic mode, the whole id reg is used.  But in
+	 * KVM, it only use the highest eight bits. Need to intercept it */
+	vmx_enable_intercept_msr_read_x2apic(0x802);
+	/* TMCCT */
+	vmx_enable_intercept_msr_read_x2apic(0x839);
+	/* TPR */
+	vmx_disable_intercept_msr_write_x2apic(0x808);
+	/* EOI */
+	vmx_disable_intercept_msr_write_x2apic(0x80b);
+	/* SELF-IPI */
+	vmx_disable_intercept_msr_write_x2apic(0x83f);
 
 	if (enable_ept) {
 		kvm_mmu_set_mask_ptes(0ull,
@@ -6657,7 +6672,13 @@ static int get_vmx_mem_address(struct kvm_vcpu *vcpu,
 
 	/* Checks for #GP/#SS exceptions. */
 	exn = false;
-	if (is_protmode(vcpu)) {
+	if (is_long_mode(vcpu)) {
+		/* Long mode: #GP(0)/#SS(0) if the memory address is in a
+		 * non-canonical form. This is the only check on the memory
+		 * destination for long mode!
+		 */
+		exn = is_noncanonical_address(*ret);
+	} else if (is_protmode(vcpu)) {
 		/* Protected mode: apply checks for segment validity in the
 		 * following order:
 		 * - segment type check (#GP(0) may be thrown)
@@ -6674,17 +6695,10 @@ static int get_vmx_mem_address(struct kvm_vcpu *vcpu,
 			 * execute-only code segment
 			 */
 			exn = ((s.type & 0xa) == 8);
-	}
-	if (exn) {
-		kvm_queue_exception_e(vcpu, GP_VECTOR, 0);
-		return 1;
-	}
-	if (is_long_mode(vcpu)) {
-		/* Long mode: #GP(0)/#SS(0) if the memory address is in a
-		 * non-canonical form. This is an only check for long mode.
-		 */
-		exn = is_noncanonical_address(*ret);
-	} else if (is_protmode(vcpu)) {
+		if (exn) {
+			kvm_queue_exception_e(vcpu, GP_VECTOR, 0);
+			return 1;
+		}
 		/* Protected mode: #GP(0)/#SS(0) if the segment is unusable.
 		 */
 		exn = (s.unusable != 0);
@@ -8211,6 +8225,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	if ((vectoring_info & VECTORING_INFO_VALID_MASK) &&
 			(exit_reason != EXIT_REASON_EXCEPTION_NMI &&
 			exit_reason != EXIT_REASON_EPT_VIOLATION &&
+			exit_reason != EXIT_REASON_PML_FULL &&
 			exit_reason != EXIT_REASON_TASK_SWITCH)) {
 		vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
 		vcpu->run->internal.suberror = KVM_INTERNAL_ERROR_DELIVERY_EV;
@@ -8270,6 +8285,12 @@ static void vmx_set_virtual_x2apic_mode(struct kvm_vcpu *vcpu, bool set)
 {
 	u32 sec_exec_control;
 
+	/* Postpone execution until vmcs01 is the current VMCS. */
+	if (is_guest_mode(vcpu)) {
+		to_vmx(vcpu)->nested.change_vmcs01_virtual_x2apic_mode = true;
+		return;
+	}
+
 	/*
 	 * There is not point to enable virtualize x2apic without enable
 	 * apicv
@@ -8318,19 +8339,19 @@ static void vmx_set_apic_access_page_addr(struct kvm_vcpu *vcpu, hpa_t hpa)
 		vmcs_write64(APIC_ACCESS_ADDR, hpa);
 }
 
-static void vmx_hwapic_isr_update(struct kvm *kvm, int isr)
+static void vmx_hwapic_isr_update(struct kvm_vcpu *vcpu, int max_isr)
 {
 	u16 status;
 	u8 old;
 
-	if (isr == -1)
-		isr = 0;
+	if (max_isr == -1)
+		max_isr = 0;
 
 	status = vmcs_read16(GUEST_INTR_STATUS);
 	old = status >> 8;
-	if (isr != old) {
+	if (max_isr != old) {
 		status &= 0xff;
-		status |= isr << 8;
+		status |= max_isr << 8;
 		vmcs_write16(GUEST_INTR_STATUS, status);
 	}
 }
@@ -8841,6 +8862,22 @@ static void vmx_load_vmcs01(struct kvm_vcpu *vcpu)
 	put_cpu();
 }
 
+/*
+ * Ensure that the current vmcs of the logical processor is the
+ * vmcs01 of the vcpu before calling free_nested().
+ */
+static void vmx_free_vcpu_nested(struct kvm_vcpu *vcpu)
+{
+       struct vcpu_vmx *vmx = to_vmx(vcpu);
+       int r;
+
+       r = vcpu_load(vcpu);
+       BUG_ON(r);
+       vmx_load_vmcs01(vcpu);
+       free_nested(vmx);
+       vcpu_put(vcpu);
+}
+
 static void vmx_free_vcpu(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
@@ -8849,8 +8886,7 @@ static void vmx_free_vcpu(struct kvm_vcpu *vcpu)
 		vmx_destroy_pml_buffer(vmx);
 	free_vpid(vmx->vpid);
 	leave_guest_mode(vcpu);
-	vmx_load_vmcs01(vcpu);
-	free_nested(vmx);
+	vmx_free_vcpu_nested(vcpu);
 	free_loaded_vmcs(vmx->loaded_vmcs);
 	kfree(vmx->guest_msrs);
 	kvm_vcpu_uninit(vcpu);
@@ -10572,6 +10608,12 @@ static void nested_vmx_vmexit(struct kvm_vcpu *vcpu, u32 exit_reason,
 	/* Update TSC_OFFSET if TSC was changed while L2 ran */
 	vmcs_write64(TSC_OFFSET, vmx->nested.vmcs01_tsc_offset);
 
+	if (vmx->nested.change_vmcs01_virtual_x2apic_mode) {
+		vmx->nested.change_vmcs01_virtual_x2apic_mode = false;
+		vmx_set_virtual_x2apic_mode(vcpu,
+				vcpu->arch.apic_base & X2APIC_ENABLE);
+	}
+
 	/* This is needed for same reason as it was needed in prepare_vmcs02 */
 	vmx->host_rsp = 0;
 
@@ -10702,7 +10744,8 @@ static int vmx_pre_block(struct kvm_vcpu *vcpu)
 	struct pi_desc *pi_desc = vcpu_to_pi_desc(vcpu);
 
 	if (!kvm_arch_has_assigned_device(vcpu->kvm) ||
-		!irq_remapping_cap(IRQ_POSTING_CAP))
+		!irq_remapping_cap(IRQ_POSTING_CAP)  ||
+		!kvm_vcpu_apicv_active(vcpu))
 		return 0;
 
 	vcpu->pre_pcpu = vcpu->cpu;
@@ -10768,7 +10811,8 @@ static void vmx_post_block(struct kvm_vcpu *vcpu)
 	unsigned long flags;
 
 	if (!kvm_arch_has_assigned_device(vcpu->kvm) ||
-		!irq_remapping_cap(IRQ_POSTING_CAP))
+		!irq_remapping_cap(IRQ_POSTING_CAP)  ||
+		!kvm_vcpu_apicv_active(vcpu))
 		return;
 
 	do {
@@ -10821,7 +10865,8 @@ static int vmx_update_pi_irte(struct kvm *kvm, unsigned int host_irq,
 	int idx, ret = -EINVAL;
 
 	if (!kvm_arch_has_assigned_device(kvm) ||
-		!irq_remapping_cap(IRQ_POSTING_CAP))
+		!irq_remapping_cap(IRQ_POSTING_CAP) ||
+		!kvm_vcpu_apicv_active(kvm->vcpus[0]))
 		return 0;
 
 	idx = srcu_read_lock(&kvm->irq_srcu);

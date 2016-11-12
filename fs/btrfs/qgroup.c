@@ -85,7 +85,7 @@ struct btrfs_qgroup {
 
 	/*
 	 * temp variables for accounting operations
-	 * Refer to qgroup_shared_accouting() for details.
+	 * Refer to qgroup_shared_accounting() for details.
 	 */
 	u64 old_refcnt;
 	u64 new_refcnt;
@@ -499,7 +499,7 @@ void btrfs_free_qgroup_config(struct btrfs_fs_info *fs_info)
 	}
 	/*
 	 * we call btrfs_free_qgroup_config() when umounting
-	 * filesystem and disabling quota, so we set qgroup_ulit
+	 * filesystem and disabling quota, so we set qgroup_ulist
 	 * to be null here to avoid double free.
 	 */
 	ulist_free(fs_info->qgroup_ulist);
@@ -995,7 +995,7 @@ int btrfs_quota_disable(struct btrfs_trans_handle *trans,
 		goto out;
 	fs_info->quota_enabled = 0;
 	fs_info->pending_quota_state = 0;
-	btrfs_qgroup_wait_for_completion(fs_info);
+	btrfs_qgroup_wait_for_completion(fs_info, false);
 	spin_lock(&fs_info->qgroup_lock);
 	quota_root = fs_info->quota_root;
 	fs_info->quota_root = NULL;
@@ -1036,7 +1036,7 @@ static void qgroup_dirty(struct btrfs_fs_info *fs_info,
 
 /*
  * The easy accounting, if we are adding/removing the only ref for an extent
- * then this qgroup and all of the parent qgroups get their refrence and
+ * then this qgroup and all of the parent qgroups get their reference and
  * exclusive counts adjusted.
  *
  * Caller should hold fs_info->qgroup_lock.
@@ -1436,7 +1436,7 @@ int btrfs_qgroup_prepare_account_extents(struct btrfs_trans_handle *trans,
 
 	/*
 	 * No need to do lock, since this function will only be called in
-	 * btrfs_commmit_transaction().
+	 * btrfs_commit_transaction().
 	 */
 	node = rb_first(&delayed_refs->dirty_extent_root);
 	while (node) {
@@ -1557,7 +1557,7 @@ static int qgroup_update_refcnt(struct btrfs_fs_info *fs_info,
  * A:	cur_old_roots < nr_old_roots	(not exclusive before)
  * !A:	cur_old_roots == nr_old_roots	(possible exclusive before)
  * B:	cur_new_roots < nr_new_roots	(not exclusive now)
- * !B:	cur_new_roots == nr_new_roots	(possible exclsuive now)
+ * !B:	cur_new_roots == nr_new_roots	(possible exclusive now)
  *
  * Results:
  * +: Possible sharing -> exclusive	-: Possible exclusive -> sharing
@@ -1851,7 +1851,7 @@ out:
 }
 
 /*
- * Copy the acounting information between qgroups. This is necessary
+ * Copy the accounting information between qgroups. This is necessary
  * when a snapshot or a subvolume is created. Throwing an error will
  * cause a transaction abort so we take extra care here to only error
  * when a readonly fs is a reasonable outcome.
@@ -2302,6 +2302,10 @@ static void btrfs_qgroup_rescan_worker(struct btrfs_work *work)
 	int err = -ENOMEM;
 	int ret = 0;
 
+	mutex_lock(&fs_info->qgroup_rescan_lock);
+	fs_info->qgroup_rescan_running = true;
+	mutex_unlock(&fs_info->qgroup_rescan_lock);
+
 	path = btrfs_alloc_path();
 	if (!path)
 		goto out;
@@ -2340,7 +2344,7 @@ out:
 	mutex_unlock(&fs_info->qgroup_rescan_lock);
 
 	/*
-	 * only update status, since the previous part has alreay updated the
+	 * only update status, since the previous part has already updated the
 	 * qgroup info.
 	 */
 	trans = btrfs_start_transaction(fs_info->quota_root, 1);
@@ -2368,6 +2372,9 @@ out:
 	}
 
 done:
+	mutex_lock(&fs_info->qgroup_rescan_lock);
+	fs_info->qgroup_rescan_running = false;
+	mutex_unlock(&fs_info->qgroup_rescan_lock);
 	complete_all(&fs_info->qgroup_rescan_completion);
 }
 
@@ -2486,20 +2493,26 @@ btrfs_qgroup_rescan(struct btrfs_fs_info *fs_info)
 	return 0;
 }
 
-int btrfs_qgroup_wait_for_completion(struct btrfs_fs_info *fs_info)
+int btrfs_qgroup_wait_for_completion(struct btrfs_fs_info *fs_info,
+				     bool interruptible)
 {
 	int running;
 	int ret = 0;
 
 	mutex_lock(&fs_info->qgroup_rescan_lock);
 	spin_lock(&fs_info->qgroup_lock);
-	running = fs_info->qgroup_flags & BTRFS_QGROUP_STATUS_FLAG_RESCAN;
+	running = fs_info->qgroup_rescan_running;
 	spin_unlock(&fs_info->qgroup_lock);
 	mutex_unlock(&fs_info->qgroup_rescan_lock);
 
-	if (running)
+	if (!running)
+		return 0;
+
+	if (interruptible)
 		ret = wait_for_completion_interruptible(
 					&fs_info->qgroup_rescan_completion);
+	else
+		wait_for_completion(&fs_info->qgroup_rescan_completion);
 
 	return ret;
 }
@@ -2542,8 +2555,7 @@ int btrfs_qgroup_reserve_data(struct inode *inode, u64 start, u64 len)
 	changeset.bytes_changed = 0;
 	changeset.range_changed = ulist_alloc(GFP_NOFS);
 	ret = set_record_extent_bits(&BTRFS_I(inode)->io_tree, start,
-			start + len -1, EXTENT_QGROUP_RESERVED, GFP_NOFS,
-			&changeset);
+			start + len -1, EXTENT_QGROUP_RESERVED, &changeset);
 	trace_btrfs_qgroup_reserve_data(inode, start, len,
 					changeset.bytes_changed,
 					QGROUP_RESERVE);
@@ -2580,8 +2592,7 @@ static int __btrfs_qgroup_release_data(struct inode *inode, u64 start, u64 len,
 		return -ENOMEM;
 
 	ret = clear_record_extent_bits(&BTRFS_I(inode)->io_tree, start, 
-			start + len -1, EXTENT_QGROUP_RESERVED, GFP_NOFS,
-			&changeset);
+			start + len -1, EXTENT_QGROUP_RESERVED, &changeset);
 	if (ret < 0)
 		goto out;
 
@@ -2672,7 +2683,7 @@ void btrfs_qgroup_free_meta(struct btrfs_root *root, int num_bytes)
 }
 
 /*
- * Check qgroup reserved space leaking, normally at destory inode
+ * Check qgroup reserved space leaking, normally at destroy inode
  * time
  */
 void btrfs_qgroup_check_reserved_leak(struct inode *inode)
@@ -2688,7 +2699,7 @@ void btrfs_qgroup_check_reserved_leak(struct inode *inode)
 		return;
 
 	ret = clear_record_extent_bits(&BTRFS_I(inode)->io_tree, 0, (u64)-1,
-			EXTENT_QGROUP_RESERVED, GFP_NOFS, &changeset);
+			EXTENT_QGROUP_RESERVED, &changeset);
 
 	WARN_ON(ret < 0);
 	if (WARN_ON(changeset.bytes_changed)) {

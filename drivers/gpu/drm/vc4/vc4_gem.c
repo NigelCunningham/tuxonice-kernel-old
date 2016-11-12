@@ -574,8 +574,8 @@ vc4_cl_lookup_bos(struct drm_device *dev,
 	spin_unlock(&file_priv->table_lock);
 
 fail:
-	kfree(handles);
-	return 0;
+	drm_free_large(handles);
+	return ret;
 }
 
 static int
@@ -822,7 +822,7 @@ vc4_wait_bo_ioctl(struct drm_device *dev, void *data,
 	if (args->pad != 0)
 		return -EINVAL;
 
-	gem_obj = drm_gem_object_lookup(dev, file_priv, args->handle);
+	gem_obj = drm_gem_object_lookup(file_priv, args->handle);
 	if (!gem_obj) {
 		DRM_ERROR("Failed to look up GEM BO %d\n", args->handle);
 		return -EINVAL;

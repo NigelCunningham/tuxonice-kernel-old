@@ -661,7 +661,7 @@ static int stm_unlock(struct spi_nor *nor, loff_t ofs, uint64_t len)
 	status_new = (status_old & ~mask & ~SR_TB) | val;
 
 	/* Don't protect status register if we're fully unlocked */
-	if (lock_len == mtd->size)
+	if (lock_len == 0)
 		status_new &= ~SR_SRWD;
 
 	if (!use_top)
@@ -832,6 +832,7 @@ static const struct flash_info spi_nor_ids[] = {
 	/* GigaDevice */
 	{ "gd25q32", INFO(0xc84016, 0, 64 * 1024,  64, SECT_4K) },
 	{ "gd25q64", INFO(0xc84017, 0, 64 * 1024, 128, SECT_4K) },
+	{ "gd25lq64c", INFO(0xc86017, 0, 64 * 1024, 128, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
 	{ "gd25q128", INFO(0xc84018, 0, 64 * 1024, 256, SECT_4K) },
 
 	/* Intel/Numonyx -- xxxs33b */

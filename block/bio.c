@@ -311,17 +311,6 @@ static void bio_chain_endio(struct bio *bio)
 	bio_endio(__bio_chain_endio(bio));
 }
 
-/*
- * Increment chain count for the bio. Make sure the CHAIN flag update
- * is visible before the raised count.
- */
-static inline void bio_inc_remaining(struct bio *bio)
-{
-	bio_set_flag(bio, BIO_CHAIN);
-	smp_mb__before_atomic();
-	atomic_inc(&bio->__bi_remaining);
-}
-
 /**
  * bio_chain - chain bio completions
  * @bio: the target bio
@@ -590,6 +579,8 @@ void __bio_clone_fast(struct bio *bio, struct bio *bio_src)
 	bio->bi_rw = bio_src->bi_rw;
 	bio->bi_iter = bio_src->bi_iter;
 	bio->bi_io_vec = bio_src->bi_io_vec;
+
+	bio_clone_blkcg_association(bio, bio_src);
 }
 EXPORT_SYMBOL(__bio_clone_fast);
 
@@ -694,6 +685,8 @@ integrity_clone:
 			return NULL;
 		}
 	}
+
+	bio_clone_blkcg_association(bio, bio_src);
 
 	return bio;
 }
@@ -2014,6 +2007,17 @@ void bio_disassociate_task(struct bio *bio)
 		css_put(bio->bi_css);
 		bio->bi_css = NULL;
 	}
+}
+
+/**
+ * bio_clone_blkcg_association - clone blkcg association from src to dst bio
+ * @dst: destination bio
+ * @src: source bio
+ */
+void bio_clone_blkcg_association(struct bio *dst, struct bio *src)
+{
+	if (src->bi_css)
+		WARN_ON(bio_associate_blkcg(dst, src->bi_css));
 }
 
 #endif /* CONFIG_BLK_CGROUP */

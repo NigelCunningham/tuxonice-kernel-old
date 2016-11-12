@@ -437,7 +437,7 @@ void ptep_zap_unused(struct mm_struct *mm, unsigned long addr,
 	pgste = pgste_get_lock(ptep);
 	pgstev = pgste_val(pgste);
 	pte = *ptep;
-	if (pte_swap(pte) &&
+	if (!reset && pte_swap(pte) &&
 	    ((pgstev & _PGSTE_GPS_USAGE_MASK) == _PGSTE_GPS_USAGE_UNUSED ||
 	     (pgstev & _PGSTE_GPS_ZERO))) {
 		ptep_zap_swap_entry(mm, pte_to_swp_entry(pte));
@@ -543,7 +543,7 @@ int set_guest_storage_key(struct mm_struct *mm, unsigned long addr,
 }
 EXPORT_SYMBOL(set_guest_storage_key);
 
-unsigned char get_guest_storage_key(struct mm_struct *mm, unsigned long addr)
+unsigned long get_guest_storage_key(struct mm_struct *mm, unsigned long addr)
 {
 	unsigned char key;
 	spinlock_t *ptl;

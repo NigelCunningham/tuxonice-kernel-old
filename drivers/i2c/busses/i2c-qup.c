@@ -515,7 +515,7 @@ static int qup_i2c_get_data_len(struct qup_i2c_dev *qup)
 static int qup_i2c_set_tags(u8 *tags, struct qup_i2c_dev *qup,
 			    struct i2c_msg *msg,  int is_dma)
 {
-	u16 addr = (msg->addr << 1) | ((msg->flags & I2C_M_RD) == I2C_M_RD);
+	u16 addr = i2c_8bit_addr_from_msg(msg);
 	int len = 0;
 	int data_len;
 
@@ -1268,6 +1268,8 @@ static int qup_i2c_xfer_v2(struct i2c_adapter *adap,
 		}
 	}
 
+	idx = 0;
+
 	do {
 		if (msgs[idx].len == 0) {
 			ret = -EINVAL;
@@ -1608,7 +1610,8 @@ static int qup_i2c_pm_resume_runtime(struct device *device)
 #ifdef CONFIG_PM_SLEEP
 static int qup_i2c_suspend(struct device *device)
 {
-	qup_i2c_pm_suspend_runtime(device);
+	if (!pm_runtime_suspended(device))
+		return qup_i2c_pm_suspend_runtime(device);
 	return 0;
 }
 

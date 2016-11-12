@@ -619,7 +619,7 @@ static void smc_hardware_send_pkt(unsigned long data)
 	SMC_SET_MMU_CMD(lp, MC_ENQUEUE);
 	smc_special_unlock(&lp->lock, flags);
 
-	dev->trans_start = jiffies;
+	netif_trans_update(dev);
 	dev->stats.tx_packets++;
 	dev->stats.tx_bytes += len;
 
@@ -1364,7 +1364,7 @@ static void smc_timeout(struct net_device *dev)
 		schedule_work(&lp->phy_configure);
 
 	/* We can accept TX packets again */
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	netif_trans_update(dev); /* prevent tx timeout */
 	netif_wake_queue(dev);
 }
 
@@ -2269,6 +2269,13 @@ static int smc_drv_probe(struct platform_device *pdev)
 	if (pd) {
 		memcpy(&lp->cfg, pd, sizeof(lp->cfg));
 		lp->io_shift = SMC91X_IO_SHIFT(lp->cfg.flags);
+
+		if (!SMC_8BIT(lp) && !SMC_16BIT(lp)) {
+			dev_err(&pdev->dev,
+				"at least one of 8-bit or 16-bit access support is required.\n");
+			ret = -ENXIO;
+			goto out_free_netdev;
+		}
 	}
 
 #if IS_BUILTIN(CONFIG_OF)

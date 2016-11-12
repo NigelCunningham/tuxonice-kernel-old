@@ -38,6 +38,9 @@
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
 #include <linux/io-mapping.h>
+#if defined(CONFIG_X86)
+#include <asm/pat.h>
+#endif
 #include <linux/sched.h>
 #include <rdma/ib_user_verbs.h>
 #include <rdma/ib_addr.h>
@@ -284,7 +287,9 @@ __be16 mlx5_get_roce_udp_sport(struct mlx5_ib_dev *dev, u8 port_num,
 
 static int mlx5_use_mad_ifc(struct mlx5_ib_dev *dev)
 {
-	return !MLX5_CAP_GEN(dev->mdev, ib_virt);
+	if (MLX5_CAP_GEN(dev->mdev, port_type) == MLX5_CAP_PORT_TYPE_IB)
+		return !MLX5_CAP_GEN(dev->mdev, ib_virt);
+	return 0;
 }
 
 enum {
@@ -516,6 +521,13 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 		props->device_cap_flags |= IB_DEVICE_UD_IP_CSUM;
 		props->device_cap_flags |= IB_DEVICE_UD_TSO;
 	}
+
+	if (MLX5_CAP_GEN(dev->mdev, eth_net_offloads) &&
+	    MLX5_CAP_ETH(dev->mdev, scatter_fcs))
+		props->device_cap_flags |= IB_DEVICE_RAW_SCATTER_FCS;
+
+	if (mlx5_get_flow_namespace(dev->mdev, MLX5_FLOW_NAMESPACE_BYPASS))
+		props->device_cap_flags |= IB_DEVICE_MANAGED_FLOW_STEERING;
 
 	props->vendor_part_id	   = mdev->pdev->device;
 	props->hw_ver		   = mdev->pdev->revision;
@@ -908,7 +920,8 @@ static struct ib_ucontext *mlx5_ib_alloc_ucontext(struct ib_device *ibdev,
 	num_uars = req.total_num_uuars / MLX5_NON_FP_BF_REGS_PER_PAGE;
 	gross_uuars = num_uars * MLX5_BF_REGS_PER_PAGE;
 	resp.qp_tab_size = 1 << MLX5_CAP_GEN(dev->mdev, log_max_qp);
-	resp.bf_reg_size = 1 << MLX5_CAP_GEN(dev->mdev, log_bf_reg_size);
+	if (mlx5_core_is_pf(dev->mdev) && MLX5_CAP_GEN(dev->mdev, bf))
+		resp.bf_reg_size = 1 << MLX5_CAP_GEN(dev->mdev, log_bf_reg_size);
 	resp.cache_line_size = L1_CACHE_BYTES;
 	resp.max_sq_desc_sz = MLX5_CAP_GEN(dev->mdev, max_wqe_sz_sq);
 	resp.max_rq_desc_sz = MLX5_CAP_GEN(dev->mdev, max_wqe_sz_rq);
@@ -981,7 +994,14 @@ static struct ib_ucontext *mlx5_ib_alloc_ucontext(struct ib_device *ibdev,
 	if (field_avail(typeof(resp), cqe_version, udata->outlen))
 		resp.response_length += sizeof(resp.cqe_version);
 
-	if (field_avail(typeof(resp), hca_core_clock_offset, udata->outlen)) {
+	/*
+	 * We don't want to expose information from the PCI bar that is located
+	 * after 4096 bytes, so if the arch only supports larger pages, let's
+	 * pretend we don't support reading the HCA's core clock. This is also
+	 * forced by mmap function.
+	 */
+	if (PAGE_SIZE <= 4096 &&
+	    field_avail(typeof(resp), hca_core_clock_offset, udata->outlen)) {
 		resp.comp_mask |=
 			MLX5_IB_ALLOC_UCONTEXT_RESP_MASK_CORE_CLOCK_OFFSET;
 		resp.hca_core_clock_offset =
@@ -1068,38 +1088,89 @@ static int get_index(unsigned long offset)
 	return get_arg(offset);
 }
 
+static inline char *mmap_cmd2str(enum mlx5_ib_mmap_cmd cmd)
+{
+	switch (cmd) {
+	case MLX5_IB_MMAP_WC_PAGE:
+		return "WC";
+	case MLX5_IB_MMAP_REGULAR_PAGE:
+		return "best effort WC";
+	case MLX5_IB_MMAP_NC_PAGE:
+		return "NC";
+	default:
+		return NULL;
+	}
+}
+
+static int uar_mmap(struct mlx5_ib_dev *dev, enum mlx5_ib_mmap_cmd cmd,
+		    struct vm_area_struct *vma, struct mlx5_uuar_info *uuari)
+{
+	int err;
+	unsigned long idx;
+	phys_addr_t pfn, pa;
+	pgprot_t prot;
+
+	switch (cmd) {
+	case MLX5_IB_MMAP_WC_PAGE:
+/* Some architectures don't support WC memory */
+#if defined(CONFIG_X86)
+		if (!pat_enabled())
+			return -EPERM;
+#elif !(defined(CONFIG_PPC) || (defined(CONFIG_ARM) && defined(CONFIG_MMU)))
+			return -EPERM;
+#endif
+	/* fall through */
+	case MLX5_IB_MMAP_REGULAR_PAGE:
+		/* For MLX5_IB_MMAP_REGULAR_PAGE do the best effort to get WC */
+		prot = pgprot_writecombine(vma->vm_page_prot);
+		break;
+	case MLX5_IB_MMAP_NC_PAGE:
+		prot = pgprot_noncached(vma->vm_page_prot);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (vma->vm_end - vma->vm_start != PAGE_SIZE)
+		return -EINVAL;
+
+	idx = get_index(vma->vm_pgoff);
+	if (idx >= uuari->num_uars)
+		return -EINVAL;
+
+	pfn = uar_index2pfn(dev, uuari->uars[idx].index);
+	mlx5_ib_dbg(dev, "uar idx 0x%lx, pfn %pa\n", idx, &pfn);
+
+	vma->vm_page_prot = prot;
+	err = io_remap_pfn_range(vma, vma->vm_start, pfn,
+				 PAGE_SIZE, vma->vm_page_prot);
+	if (err) {
+		mlx5_ib_err(dev, "io_remap_pfn_range failed with error=%d, vm_start=0x%lx, pfn=%pa, mmap_cmd=%s\n",
+			    err, vma->vm_start, &pfn, mmap_cmd2str(cmd));
+		return -EAGAIN;
+	}
+
+	pa = pfn << PAGE_SHIFT;
+	mlx5_ib_dbg(dev, "mapped %s at 0x%lx, PA %pa\n", mmap_cmd2str(cmd),
+		    vma->vm_start, &pa);
+
+	return 0;
+}
+
 static int mlx5_ib_mmap(struct ib_ucontext *ibcontext, struct vm_area_struct *vma)
 {
 	struct mlx5_ib_ucontext *context = to_mucontext(ibcontext);
 	struct mlx5_ib_dev *dev = to_mdev(ibcontext->device);
 	struct mlx5_uuar_info *uuari = &context->uuari;
 	unsigned long command;
-	unsigned long idx;
 	phys_addr_t pfn;
 
 	command = get_command(vma->vm_pgoff);
 	switch (command) {
+	case MLX5_IB_MMAP_WC_PAGE:
+	case MLX5_IB_MMAP_NC_PAGE:
 	case MLX5_IB_MMAP_REGULAR_PAGE:
-		if (vma->vm_end - vma->vm_start != PAGE_SIZE)
-			return -EINVAL;
-
-		idx = get_index(vma->vm_pgoff);
-		if (idx >= uuari->num_uars)
-			return -EINVAL;
-
-		pfn = uar_index2pfn(dev, uuari->uars[idx].index);
-		mlx5_ib_dbg(dev, "uar idx 0x%lx, pfn 0x%llx\n", idx,
-			    (unsigned long long)pfn);
-
-		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
-		if (io_remap_pfn_range(vma, vma->vm_start, pfn,
-				       PAGE_SIZE, vma->vm_page_prot))
-			return -EAGAIN;
-
-		mlx5_ib_dbg(dev, "mapped WC at 0x%lx, PA 0x%llx\n",
-			    vma->vm_start,
-			    (unsigned long long)pfn << PAGE_SHIFT);
-		break;
+		return uar_mmap(dev, command, vma, uuari);
 
 	case MLX5_IB_MMAP_GET_CONTIGUOUS_PAGES:
 		return -ENOSYS;
@@ -1108,7 +1179,7 @@ static int mlx5_ib_mmap(struct ib_ucontext *ibcontext, struct vm_area_struct *vm
 		if (vma->vm_end - vma->vm_start != PAGE_SIZE)
 			return -EINVAL;
 
-		if (vma->vm_flags & (VM_WRITE | VM_EXEC))
+		if (vma->vm_flags & VM_WRITE)
 			return -EPERM;
 
 		/* Don't expose to user-space information it shouldn't have */
@@ -1205,6 +1276,13 @@ static int parse_flow_attr(u32 *match_c, u32 *match_v,
 		ether_addr_copy(MLX5_ADDR_OF(fte_match_set_lyr_2_4, outer_headers_v,
 					     dmac_47_16),
 				ib_spec->eth.val.dst_mac);
+
+		ether_addr_copy(MLX5_ADDR_OF(fte_match_set_lyr_2_4, outer_headers_c,
+					     smac_47_16),
+				ib_spec->eth.mask.src_mac);
+		ether_addr_copy(MLX5_ADDR_OF(fte_match_set_lyr_2_4, outer_headers_v,
+					     smac_47_16),
+				ib_spec->eth.val.src_mac);
 
 		if (ib_spec->eth.mask.vlan_tag) {
 			MLX5_SET(fte_match_set_lyr_2_4, outer_headers_c,
@@ -1438,7 +1516,8 @@ static struct mlx5_ib_flow_prio *get_flow_table(struct mlx5_ib_dev *dev,
 	if (!ft) {
 		ft = mlx5_create_auto_grouped_flow_table(ns, priority,
 							 num_entries,
-							 num_groups);
+							 num_groups,
+							 0);
 
 		if (!IS_ERR(ft)) {
 			prio->refcount = 0;
@@ -1739,7 +1818,7 @@ static ssize_t show_fw_ver(struct device *device, struct device_attribute *attr,
 {
 	struct mlx5_ib_dev *dev =
 		container_of(device, struct mlx5_ib_dev, ib_dev.dev);
-	return sprintf(buf, "%d.%d.%d\n", fw_rev_maj(dev->mdev),
+	return sprintf(buf, "%d.%d.%04d\n", fw_rev_maj(dev->mdev),
 		       fw_rev_min(dev->mdev), fw_rev_sub(dev->mdev));
 }
 
@@ -1807,13 +1886,10 @@ static void mlx5_ib_event(struct mlx5_core_dev *dev, void *context,
 		break;
 
 	case MLX5_DEV_EVENT_PORT_DOWN:
+	case MLX5_DEV_EVENT_PORT_INITIALIZED:
 		ibev.event = IB_EVENT_PORT_ERR;
 		port = (u8)param;
 		break;
-
-	case MLX5_DEV_EVENT_PORT_INITIALIZED:
-		/* not used by ULPs */
-		return;
 
 	case MLX5_DEV_EVENT_LID_CHANGE:
 		ibev.event = IB_EVENT_LID_CHANGE;

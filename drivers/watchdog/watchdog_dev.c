@@ -258,10 +258,12 @@ static int watchdog_stop(struct watchdog_device *wdd)
 		return -EBUSY;
 	}
 
-	if (wdd->ops->stop)
+	if (wdd->ops->stop) {
+		clear_bit(WDOG_HW_RUNNING, &wdd->status);
 		err = wdd->ops->stop(wdd);
-	else
+	} else {
 		set_bit(WDOG_HW_RUNNING, &wdd->status);
+	}
 
 	if (err == 0) {
 		clear_bit(WDOG_ACTIVE, &wdd->status);
@@ -736,7 +738,6 @@ static int watchdog_release(struct inode *inode, struct file *file)
 		watchdog_ping(wdd);
 	}
 
-	cancel_delayed_work_sync(&wd_data->work);
 	watchdog_update_worker(wdd);
 
 	/* make sure that /dev/watchdog can be re-opened */

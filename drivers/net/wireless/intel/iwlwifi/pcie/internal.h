@@ -348,7 +348,7 @@ struct iwl_tso_hdr_page {
 struct iwl_trans_pcie {
 	struct iwl_rxq *rxq;
 	struct iwl_rx_mem_buffer rx_pool[RX_POOL_SIZE];
-	struct iwl_rx_mem_buffer *global_table[MQ_RX_TABLE_SIZE];
+	struct iwl_rx_mem_buffer *global_table[RX_POOL_SIZE];
 	struct iwl_rb_allocator rba;
 	struct iwl_trans *trans;
 	struct iwl_drv *drv;
@@ -402,10 +402,6 @@ struct iwl_trans_pcie {
 	spinlock_t reg_lock;
 	bool cmd_hold_nic_awake;
 	bool ref_cmd_in_flight;
-
-	/* protect ref counter */
-	spinlock_t ref_lock;
-	u32 ref_count;
 
 	dma_addr_t fw_mon_phys;
 	struct page *fw_mon_page;
@@ -485,9 +481,6 @@ void iwl_trans_pcie_reclaim(struct iwl_trans *trans, int txq_id, int ssn,
 			    struct sk_buff_head *skbs);
 void iwl_trans_pcie_tx_reset(struct iwl_trans *trans);
 
-void iwl_trans_pcie_ref(struct iwl_trans *trans);
-void iwl_trans_pcie_unref(struct iwl_trans *trans);
-
 static inline u16 iwl_pcie_tfd_tb_get_len(struct iwl_tfd *tfd, u8 idx)
 {
 	struct iwl_tfd_tb *tb = &tfd->tbs[idx];
@@ -503,7 +496,7 @@ void iwl_pcie_dump_csr(struct iwl_trans *trans);
 /*****************************************************
 * Helpers
 ******************************************************/
-static inline void iwl_disable_interrupts(struct iwl_trans *trans)
+static inline void _iwl_disable_interrupts(struct iwl_trans *trans)
 {
 	struct iwl_trans_pcie *trans_pcie = IWL_TRANS_GET_PCIE_TRANS(trans);
 
@@ -526,7 +519,16 @@ static inline void iwl_disable_interrupts(struct iwl_trans *trans)
 	IWL_DEBUG_ISR(trans, "Disabled interrupts\n");
 }
 
-static inline void iwl_enable_interrupts(struct iwl_trans *trans)
+static inline void iwl_disable_interrupts(struct iwl_trans *trans)
+{
+	struct iwl_trans_pcie *trans_pcie = IWL_TRANS_GET_PCIE_TRANS(trans);
+
+	spin_lock(&trans_pcie->irq_lock);
+	_iwl_disable_interrupts(trans);
+	spin_unlock(&trans_pcie->irq_lock);
+}
+
+static inline void _iwl_enable_interrupts(struct iwl_trans *trans)
 {
 	struct iwl_trans_pcie *trans_pcie = IWL_TRANS_GET_PCIE_TRANS(trans);
 
@@ -549,6 +551,14 @@ static inline void iwl_enable_interrupts(struct iwl_trans *trans)
 	}
 }
 
+static inline void iwl_enable_interrupts(struct iwl_trans *trans)
+{
+	struct iwl_trans_pcie *trans_pcie = IWL_TRANS_GET_PCIE_TRANS(trans);
+
+	spin_lock(&trans_pcie->irq_lock);
+	_iwl_enable_interrupts(trans);
+	spin_unlock(&trans_pcie->irq_lock);
+}
 static inline void iwl_enable_hw_int_msk_msix(struct iwl_trans *trans, u32 msk)
 {
 	struct iwl_trans_pcie *trans_pcie = IWL_TRANS_GET_PCIE_TRANS(trans);

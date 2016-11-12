@@ -1454,7 +1454,7 @@ void native_disable_io_apic(void)
 		ioapic_write_entry(ioapic_i8259.apic, ioapic_i8259.pin, entry);
 	}
 
-	if (cpu_has_apic || apic_from_smp_config())
+	if (boot_cpu_has(X86_FEATURE_APIC) || apic_from_smp_config())
 		disconnect_bsp_APIC(ioapic_i8259.pin != -1);
 }
 
@@ -1592,7 +1592,7 @@ void __init setup_ioapic_ids_from_mpc(void)
 	 * no meaning without the serial APIC bus.
 	 */
 	if (!(boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
-		|| APIC_XAPIC(apic_version[boot_cpu_physical_apicid]))
+		|| APIC_XAPIC(boot_cpu_apic_version))
 		return;
 	setup_ioapic_ids_from_mpc_nocheck();
 }
@@ -2422,7 +2422,7 @@ static int io_apic_get_unique_id(int ioapic, int apic_id)
 static u8 io_apic_unique_id(int idx, u8 id)
 {
 	if ((boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) &&
-	    !APIC_XAPIC(apic_version[boot_cpu_physical_apicid]))
+	    !APIC_XAPIC(boot_cpu_apic_version))
 		return io_apic_get_unique_id(idx, id);
 	else
 		return id;
@@ -2588,8 +2588,8 @@ static struct resource * __init ioapic_setup_resources(void)
 		res[num].flags = IORESOURCE_MEM | IORESOURCE_BUSY;
 		snprintf(mem, IOAPIC_RESOURCE_NAME_SIZE, "IOAPIC %u", i);
 		mem += IOAPIC_RESOURCE_NAME_SIZE;
+		ioapics[i].iomem_res = &res[num];
 		num++;
-		ioapics[i].iomem_res = res;
 	}
 
 	ioapic_resources = res;

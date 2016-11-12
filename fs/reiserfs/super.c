@@ -190,7 +190,15 @@ static int remove_save_link_only(struct super_block *s,
 static int reiserfs_quota_on_mount(struct super_block *, int);
 #endif
 
-/* look for uncompleted unlinks and truncates and complete them */
+/*
+ * Look for uncompleted unlinks and truncates and complete them
+ *
+ * Called with superblock write locked.  If quotas are enabled, we have to
+ * release/retake lest we call dquot_quota_on_mount(), proceed to
+ * schedule_on_each_cpu() in invalidate_bdev() and deadlock waiting for the per
+ * cpu worklets to complete flush_async_commits() that in turn wait for the
+ * superblock write lock.
+ */
 static int finish_unfinished(struct super_block *s)
 {
 	INITIALIZE_PATH(path);
@@ -237,7 +245,9 @@ static int finish_unfinished(struct super_block *s)
 				quota_enabled[i] = 0;
 				continue;
 			}
+			reiserfs_write_unlock(s);
 			ret = reiserfs_quota_on_mount(s, i);
+			reiserfs_write_lock(s);
 			if (ret < 0)
 				reiserfs_warning(s, "reiserfs-2500",
 						 "cannot turn on journaled "
@@ -1393,13 +1403,17 @@ static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
 	unsigned long safe_mask = 0;
 	unsigned int commit_max_age = (unsigned int)-1;
 	struct reiserfs_journal *journal = SB_JOURNAL(s);
-	char *new_opts = kstrdup(arg, GFP_KERNEL);
+	char *new_opts;
 	int err;
 	char *qf_names[REISERFS_MAXQUOTAS];
 	unsigned int qfmt = 0;
 #ifdef CONFIG_QUOTA
 	int i;
 #endif
+
+	new_opts = kstrdup(arg, GFP_KERNEL);
+	if (arg && !new_opts)
+		return -ENOMEM;
 
 	sync_filesystem(s);
 	reiserfs_write_lock(s);
@@ -1546,7 +1560,8 @@ static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
 	}
 
 out_ok_unlocked:
-	replace_mount_options(s, new_opts);
+	if (new_opts)
+		replace_mount_options(s, new_opts);
 	return 0;
 
 out_err_unlock:

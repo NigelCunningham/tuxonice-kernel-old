@@ -16,6 +16,7 @@ struct vc4_dev {
 	struct vc4_hvs *hvs;
 	struct vc4_crtc *crtc[3];
 	struct vc4_v3d *v3d;
+	struct vc4_dpi *dpi;
 
 	struct drm_fbdev_cma *fbdev;
 
@@ -320,6 +321,15 @@ vc4_first_render_job(struct vc4_dev *vc4)
 				struct vc4_exec_info, head);
 }
 
+static inline struct vc4_exec_info *
+vc4_last_render_job(struct vc4_dev *vc4)
+{
+	if (list_empty(&vc4->render_job_list))
+		return NULL;
+	return list_last_entry(&vc4->render_job_list,
+			       struct vc4_exec_info, head);
+}
+
 /**
  * struct vc4_texture_sample_info - saves the offsets into the UBO for texture
  * setup parameters.
@@ -421,6 +431,10 @@ void vc4_debugfs_cleanup(struct drm_minor *minor);
 
 /* vc4_drv.c */
 void __iomem *vc4_ioremap_regs(struct platform_device *dev, int index);
+
+/* vc4_dpi.c */
+extern struct platform_driver vc4_dpi_driver;
+int vc4_dpi_debugfs_regs(struct seq_file *m, void *unused);
 
 /* vc4_gem.c */
 void vc4_gem_init(struct drm_device *dev);

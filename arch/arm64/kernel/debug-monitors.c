@@ -135,9 +135,8 @@ static void clear_os_lock(void *unused)
 static int os_lock_notify(struct notifier_block *self,
 				    unsigned long action, void *data)
 {
-	int cpu = (unsigned long)data;
 	if ((action & ~CPU_TASKS_FROZEN) == CPU_ONLINE)
-		smp_call_function_single(cpu, clear_os_lock, NULL, 1);
+		clear_os_lock(NULL);
 	return NOTIFY_OK;
 }
 
@@ -152,7 +151,6 @@ static int debug_monitors_init(void)
 	/* Clear the OS lock. */
 	on_each_cpu(clear_os_lock, NULL, 1);
 	isb();
-	local_dbg_enable();
 
 	/* Register hotplug handler. */
 	__register_cpu_notifier(&os_lock_nb);
@@ -419,8 +417,10 @@ int kernel_active_single_step(void)
 /* ptrace API */
 void user_enable_single_step(struct task_struct *task)
 {
-	set_ti_thread_flag(task_thread_info(task), TIF_SINGLESTEP);
-	set_regs_spsr_ss(task_pt_regs(task));
+	struct thread_info *ti = task_thread_info(task);
+
+	if (!test_and_set_ti_thread_flag(ti, TIF_SINGLESTEP))
+		set_regs_spsr_ss(task_pt_regs(task));
 }
 
 void user_disable_single_step(struct task_struct *task)

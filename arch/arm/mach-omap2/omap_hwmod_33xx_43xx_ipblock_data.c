@@ -918,6 +918,8 @@ static struct omap_hwmod_class_sysconfig am33xx_rtc_sysc = {
 static struct omap_hwmod_class am33xx_rtc_hwmod_class = {
 	.name		= "rtc",
 	.sysc		= &am33xx_rtc_sysc,
+	.unlock		= &omap_hwmod_rtc_unlock,
+	.lock		= &omap_hwmod_rtc_lock,
 };
 
 struct omap_hwmod am33xx_rtc_hwmod = {
@@ -1474,6 +1476,7 @@ static void omap_hwmod_am43xx_rst(void)
 {
 	RSTCTRL(am33xx_pruss_hwmod, AM43XX_RM_PER_RSTCTRL_OFFSET);
 	RSTCTRL(am33xx_gfx_hwmod, AM43XX_RM_GFX_RSTCTRL_OFFSET);
+	RSTST(am33xx_pruss_hwmod, AM43XX_RM_PER_RSTST_OFFSET);
 	RSTST(am33xx_gfx_hwmod, AM43XX_RM_GFX_RSTST_OFFSET);
 }
 

@@ -58,10 +58,11 @@ static int ping_v6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	int iif = 0;
 	struct flowi6 fl6;
 	int err;
-	int hlimit;
 	struct dst_entry *dst;
 	struct rt6_info *rt;
 	struct pingfakehdr pfh;
+	struct sockcm_cookie junk = {0};
+	struct ipcm6_cookie ipc6;
 
 	pr_debug("ping_v6_sendmsg(sk=%p,sk->num=%u)\n", inet, inet->inet_num);
 
@@ -121,8 +122,10 @@ static int ping_v6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	rt = (struct rt6_info *) dst;
 
 	np = inet6_sk(sk);
-	if (!np)
-		return -EBADF;
+	if (!np) {
+		err = -EBADF;
+		goto dst_err_out;
+	}
 
 	if (!fl6.flowi6_oif && ipv6_addr_is_multicast(&fl6.daddr))
 		fl6.flowi6_oif = np->mcast_oif;
@@ -138,13 +141,15 @@ static int ping_v6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	pfh.wcheck = 0;
 	pfh.family = AF_INET6;
 
-	hlimit = ip6_sk_dst_hoplimit(np, &fl6, dst);
+	ipc6.hlimit = ip6_sk_dst_hoplimit(np, &fl6, dst);
+	ipc6.tclass = np->tclass;
+	ipc6.dontfrag = np->dontfrag;
+	ipc6.opt = NULL;
 
 	lock_sock(sk);
 	err = ip6_append_data(sk, ping_getfrag, &pfh, len,
-			      0, hlimit,
-			      np->tclass, NULL, &fl6, rt,
-			      MSG_DONTWAIT, np->dontfrag);
+			      0, &ipc6, &fl6, rt,
+			      MSG_DONTWAIT, &junk);
 
 	if (err) {
 		ICMP6_INC_STATS(sock_net(sk), rt->rt6i_idev,
@@ -156,6 +161,9 @@ static int ping_v6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 						 len);
 	}
 	release_sock(sk);
+
+dst_err_out:
+	dst_release(dst);
 
 	if (err)
 		return err;

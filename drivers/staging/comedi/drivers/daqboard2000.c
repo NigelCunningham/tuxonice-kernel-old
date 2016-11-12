@@ -26,7 +26,7 @@
  * Much of the functionality of this driver was determined from reading
  * the source code for the Windows driver.
  *
- * The FPGA on the board requires fimware, which is available from
+ * The FPGA on the board requires firmware, which is available from
  * http://www.comedi.org in the comedi_nonfree_firmware tarball.
  *
  * Configuration options: not applicable, uses PCI auto config
@@ -636,7 +636,7 @@ static const void *daqboard2000_find_boardinfo(struct comedi_device *dev,
 	const struct daq200_boardtype *board;
 	int i;
 
-	if (pcidev->subsystem_device != PCI_VENDOR_ID_IOTECH)
+	if (pcidev->subsystem_vendor != PCI_VENDOR_ID_IOTECH)
 		return NULL;
 
 	for (i = 0; i < ARRAY_SIZE(boardtypes); i++) {

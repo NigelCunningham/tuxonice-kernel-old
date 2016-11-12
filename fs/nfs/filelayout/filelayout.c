@@ -375,8 +375,7 @@ static int filelayout_commit_done_cb(struct rpc_task *task,
 		return -EAGAIN;
 	}
 
-	if (data->verf.committed == NFS_UNSTABLE)
-		pnfs_set_layoutcommit(data->inode, data->lseg, data->lwb);
+	pnfs_set_layoutcommit(data->inode, data->lseg, data->lwb);
 
 	return 0;
 }
@@ -795,7 +794,7 @@ filelayout_alloc_commit_info(struct pnfs_layout_segment *lseg,
 		buckets[i].direct_verf.committed = NFS_INVALID_STABLE_HOW;
 	}
 
-	spin_lock(cinfo->lock);
+	spin_lock(&cinfo->inode->i_lock);
 	if (cinfo->ds->nbuckets >= size)
 		goto out;
 	for (i = 0; i < cinfo->ds->nbuckets; i++) {
@@ -811,7 +810,7 @@ filelayout_alloc_commit_info(struct pnfs_layout_segment *lseg,
 	swap(cinfo->ds->buckets, buckets);
 	cinfo->ds->nbuckets = size;
 out:
-	spin_unlock(cinfo->lock);
+	spin_unlock(&cinfo->inode->i_lock);
 	kfree(buckets);
 	return 0;
 }
@@ -890,6 +889,7 @@ filelayout_pg_init_read(struct nfs_pageio_descriptor *pgio,
 					   0,
 					   NFS4_MAX_UINT64,
 					   IOMODE_READ,
+					   false,
 					   GFP_KERNEL);
 		if (IS_ERR(pgio->pg_lseg)) {
 			pgio->pg_error = PTR_ERR(pgio->pg_lseg);
@@ -915,6 +915,7 @@ filelayout_pg_init_write(struct nfs_pageio_descriptor *pgio,
 					   0,
 					   NFS4_MAX_UINT64,
 					   IOMODE_RW,
+					   false,
 					   GFP_NOFS);
 		if (IS_ERR(pgio->pg_lseg)) {
 			pgio->pg_error = PTR_ERR(pgio->pg_lseg);

@@ -222,7 +222,7 @@ static int process_measurement(struct file *file, char *buf, loff_t size,
 	if ((action & IMA_APPRAISE_SUBMASK) ||
 		    strcmp(template_desc->name, IMA_TEMPLATE_IMA_NAME) != 0)
 		/* read 'security.ima' */
-		xattr_len = ima_read_xattr(file->f_path.dentry, &xattr_value);
+		xattr_len = ima_read_xattr(file_dentry(file), &xattr_value);
 
 	hash_algo = ima_get_hash_algo(xattr_value, xattr_len);
 
@@ -246,7 +246,8 @@ static int process_measurement(struct file *file, char *buf, loff_t size,
 		ima_audit_measurement(iint, pathname);
 
 out_digsig:
-	if ((mask & MAY_WRITE) && (iint->flags & IMA_DIGSIG))
+	if ((mask & MAY_WRITE) && (iint->flags & IMA_DIGSIG) &&
+	     !(iint->flags & IMA_NEW_FILE))
 		rc = -EACCES;
 	kfree(xattr_value);
 out_free:
@@ -314,6 +315,28 @@ int ima_file_check(struct file *file, int mask, int opened)
 				   FILE_CHECK, opened);
 }
 EXPORT_SYMBOL_GPL(ima_file_check);
+
+/**
+ * ima_post_path_mknod - mark as a new inode
+ * @dentry: newly created dentry
+ *
+ * Mark files created via the mknodat syscall as new, so that the
+ * file data can be written later.
+ */
+void ima_post_path_mknod(struct dentry *dentry)
+{
+	struct integrity_iint_cache *iint;
+	struct inode *inode = dentry->d_inode;
+	int must_appraise;
+
+	must_appraise = ima_must_appraise(inode, MAY_ACCESS, FILE_CHECK);
+	if (!must_appraise)
+		return;
+
+	iint = integrity_inode_get(inode);
+	if (iint)
+		iint->flags |= IMA_NEW_FILE;
+}
 
 /**
  * ima_read_file - pre-measure/appraise hook decision based on policy

@@ -517,7 +517,9 @@ EXPORT_SYMBOL_GPL(blk_queue_bypass_end);
 
 void blk_set_queue_dying(struct request_queue *q)
 {
-	queue_flag_set_unlocked(QUEUE_FLAG_DYING, q);
+	spin_lock_irq(q->queue_lock);
+	queue_flag_set(QUEUE_FLAG_DYING, q);
+	spin_unlock_irq(q->queue_lock);
 
 	if (q->mq_ops)
 		blk_mq_wake_waiters(q);
@@ -1525,6 +1527,7 @@ EXPORT_SYMBOL(blk_put_request);
  * blk_add_request_payload - add a payload to a request
  * @rq: request to update
  * @page: page backing the payload
+ * @offset: offset in page
  * @len: length of the payload.
  *
  * This allows to later add a payload to an already submitted request by
@@ -1535,12 +1538,12 @@ EXPORT_SYMBOL(blk_put_request);
  * discard requests should ever use it.
  */
 void blk_add_request_payload(struct request *rq, struct page *page,
-		unsigned int len)
+		int offset, unsigned int len)
 {
 	struct bio *bio = rq->bio;
 
 	bio->bi_io_vec->bv_page = page;
-	bio->bi_io_vec->bv_offset = 0;
+	bio->bi_io_vec->bv_offset = offset;
 	bio->bi_io_vec->bv_len = len;
 
 	bio->bi_iter.bi_size = len;
@@ -1965,7 +1968,8 @@ generic_make_request_checks(struct bio *bio)
 	 * drivers without flush support don't have to worry
 	 * about them.
 	 */
-	if ((bio->bi_rw & (REQ_FLUSH | REQ_FUA)) && !q->flush_flags) {
+	if ((bio->bi_rw & (REQ_FLUSH | REQ_FUA)) &&
+	    !test_bit(QUEUE_FLAG_WC, &q->queue_flags)) {
 		bio->bi_rw &= ~(REQ_FLUSH | REQ_FUA);
 		if (!nr_sectors) {
 			err = 0;

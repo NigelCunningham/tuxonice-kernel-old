@@ -44,7 +44,7 @@
 #include <nvif/cla06f.h>
 #include <nvif/if0004.h>
 
-#include "nouveau_drm.h"
+#include "nouveau_drv.h"
 #include "nouveau_dma.h"
 #include "nouveau_ttm.h"
 #include "nouveau_gem.h"
@@ -324,7 +324,16 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
 	    !vga_switcheroo_handler_flags())
 		return -EPROBE_DEFER;
 
-	/* remove conflicting drivers (vesafb, efifb etc) */
+	/* We need to check that the chipset is supported before booting
+	 * fbdev off the hardware, as there's no way to put it back.
+	 */
+	ret = nvkm_device_pci_new(pdev, NULL, "error", true, false, 0, &device);
+	if (ret)
+		return ret;
+
+	nvkm_device_del(&device);
+
+	/* Remove conflicting drivers (vesafb, efifb etc). */
 	aper = alloc_apertures(3);
 	if (!aper)
 		return -ENOMEM;
@@ -1083,10 +1092,8 @@ nouveau_drm_init(void)
 	nouveau_display_options();
 
 	if (nouveau_modeset == -1) {
-#ifdef CONFIG_VGA_CONSOLE
 		if (vgacon_text_force())
 			nouveau_modeset = 0;
-#endif
 	}
 
 	if (!nouveau_modeset)

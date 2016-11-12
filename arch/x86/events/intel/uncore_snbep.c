@@ -2546,7 +2546,7 @@ void hswep_uncore_cpu_init(void)
 
 static struct intel_uncore_type hswep_uncore_ha = {
 	.name		= "ha",
-	.num_counters   = 5,
+	.num_counters   = 4,
 	.num_boxes	= 2,
 	.perf_ctr_bits	= 48,
 	SNBEP_UNCORE_PCI_COMMON_INIT(),
@@ -2565,7 +2565,7 @@ static struct uncore_event_desc hswep_uncore_imc_events[] = {
 
 static struct intel_uncore_type hswep_uncore_imc = {
 	.name		= "imc",
-	.num_counters   = 5,
+	.num_counters   = 4,
 	.num_boxes	= 8,
 	.perf_ctr_bits	= 48,
 	.fixed_ctr_bits	= 48,
@@ -2611,7 +2611,7 @@ static struct intel_uncore_type hswep_uncore_irp = {
 
 static struct intel_uncore_type hswep_uncore_qpi = {
 	.name			= "qpi",
-	.num_counters		= 5,
+	.num_counters		= 4,
 	.num_boxes		= 3,
 	.perf_ctr_bits		= 48,
 	.perf_ctr		= SNBEP_PCI_PMON_CTR0,
@@ -2693,7 +2693,7 @@ static struct event_constraint hswep_uncore_r3qpi_constraints[] = {
 
 static struct intel_uncore_type hswep_uncore_r3qpi = {
 	.name		= "r3qpi",
-	.num_counters   = 4,
+	.num_counters   = 3,
 	.num_boxes	= 3,
 	.perf_ctr_bits	= 44,
 	.constraints	= hswep_uncore_r3qpi_constraints,
@@ -2868,27 +2868,10 @@ static struct intel_uncore_type bdx_uncore_cbox = {
 	.format_group		= &hswep_uncore_cbox_format_group,
 };
 
-static struct intel_uncore_type bdx_uncore_sbox = {
-	.name			= "sbox",
-	.num_counters		= 4,
-	.num_boxes		= 4,
-	.perf_ctr_bits		= 48,
-	.event_ctl		= HSWEP_S0_MSR_PMON_CTL0,
-	.perf_ctr		= HSWEP_S0_MSR_PMON_CTR0,
-	.event_mask		= HSWEP_S_MSR_PMON_RAW_EVENT_MASK,
-	.box_ctl		= HSWEP_S0_MSR_PMON_BOX_CTL,
-	.msr_offset		= HSWEP_SBOX_MSR_OFFSET,
-	.ops			= &hswep_uncore_sbox_msr_ops,
-	.format_group		= &hswep_uncore_sbox_format_group,
-};
-
-#define BDX_MSR_UNCORE_SBOX	3
-
 static struct intel_uncore_type *bdx_msr_uncores[] = {
 	&bdx_uncore_ubox,
 	&bdx_uncore_cbox,
 	&hswep_uncore_pcu,
-	&bdx_uncore_sbox,
 	NULL,
 };
 
@@ -2897,10 +2880,6 @@ void bdx_uncore_cpu_init(void)
 	if (bdx_uncore_cbox.num_boxes > boot_cpu_data.x86_max_cores)
 		bdx_uncore_cbox.num_boxes = boot_cpu_data.x86_max_cores;
 	uncore_msr_uncores = bdx_msr_uncores;
-
-	/* BDX-DE doesn't have SBOX */
-	if (boot_cpu_data.x86_model == 86)
-		uncore_msr_uncores[BDX_MSR_UNCORE_SBOX] = NULL;
 }
 
 static struct intel_uncore_type bdx_uncore_ha = {
@@ -2913,7 +2892,7 @@ static struct intel_uncore_type bdx_uncore_ha = {
 
 static struct intel_uncore_type bdx_uncore_imc = {
 	.name		= "imc",
-	.num_counters   = 5,
+	.num_counters   = 4,
 	.num_boxes	= 8,
 	.perf_ctr_bits	= 48,
 	.fixed_ctr_bits	= 48,

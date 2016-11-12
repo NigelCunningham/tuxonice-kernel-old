@@ -385,7 +385,7 @@ static void create_mapping_late(phys_addr_t phys, unsigned long virt,
 
 static void __init __map_memblock(pgd_t *pgd, phys_addr_t start, phys_addr_t end)
 {
-	unsigned long kernel_start = __pa(_stext);
+	unsigned long kernel_start = __pa(_text);
 	unsigned long kernel_end = __pa(_etext);
 
 	/*
@@ -417,7 +417,7 @@ static void __init __map_memblock(pgd_t *pgd, phys_addr_t start, phys_addr_t end
 				     early_pgtable_alloc);
 
 	/*
-	 * Map the linear alias of the [_stext, _etext) interval as
+	 * Map the linear alias of the [_text, _etext) interval as
 	 * read-only/non-executable. This makes the contents of the
 	 * region accessible to subsystems such as hibernate, but
 	 * protects it from inadvertent modification or execution.
@@ -449,8 +449,8 @@ void mark_rodata_ro(void)
 {
 	unsigned long section_size;
 
-	section_size = (unsigned long)__start_rodata - (unsigned long)_stext;
-	create_mapping_late(__pa(_stext), (unsigned long)_stext,
+	section_size = (unsigned long)__start_rodata - (unsigned long)_text;
+	create_mapping_late(__pa(_text), (unsigned long)_text,
 			    section_size, PAGE_KERNEL_ROX);
 	/*
 	 * mark .rodata as read only. Use _etext rather than __end_rodata to
@@ -471,8 +471,8 @@ void fixup_init(void)
 	unmap_kernel_range((u64)__init_begin, (u64)(__init_end - __init_begin));
 }
 
-static void __init map_kernel_chunk(pgd_t *pgd, void *va_start, void *va_end,
-				    pgprot_t prot, struct vm_struct *vma)
+static void __init map_kernel_segment(pgd_t *pgd, void *va_start, void *va_end,
+				      pgprot_t prot, struct vm_struct *vma)
 {
 	phys_addr_t pa_start = __pa(va_start);
 	unsigned long size = va_end - va_start;
@@ -499,11 +499,11 @@ static void __init map_kernel(pgd_t *pgd)
 {
 	static struct vm_struct vmlinux_text, vmlinux_rodata, vmlinux_init, vmlinux_data;
 
-	map_kernel_chunk(pgd, _stext, __start_rodata, PAGE_KERNEL_EXEC, &vmlinux_text);
-	map_kernel_chunk(pgd, __start_rodata, _etext, PAGE_KERNEL, &vmlinux_rodata);
-	map_kernel_chunk(pgd, __init_begin, __init_end, PAGE_KERNEL_EXEC,
-			 &vmlinux_init);
-	map_kernel_chunk(pgd, _data, _end, PAGE_KERNEL, &vmlinux_data);
+	map_kernel_segment(pgd, _text, __start_rodata, PAGE_KERNEL_EXEC, &vmlinux_text);
+	map_kernel_segment(pgd, __start_rodata, _etext, PAGE_KERNEL, &vmlinux_rodata);
+	map_kernel_segment(pgd, __init_begin, __init_end, PAGE_KERNEL_EXEC,
+			   &vmlinux_init);
+	map_kernel_segment(pgd, _data, _end, PAGE_KERNEL, &vmlinux_data);
 
 	if (!pgd_val(*pgd_offset_raw(pgd, FIXADDR_START))) {
 		/*
@@ -564,8 +564,6 @@ void __init paging_init(void)
 	 */
 	memblock_free(__pa(swapper_pg_dir) + PAGE_SIZE,
 		      SWAPPER_DIR_SIZE - PAGE_SIZE);
-
-	bootmem_init();
 }
 
 /*
@@ -750,9 +748,9 @@ void *__init __fixmap_remap_fdt(phys_addr_t dt_phys, int *size, pgprot_t prot)
 	/*
 	 * Check whether the physical FDT address is set and meets the minimum
 	 * alignment requirement. Since we are relying on MIN_FDT_ALIGN to be
-	 * at least 8 bytes so that we can always access the size field of the
-	 * FDT header after mapping the first chunk, double check here if that
-	 * is indeed the case.
+	 * at least 8 bytes so that we can always access the magic and size
+	 * fields of the FDT header after mapping the first chunk, double check
+	 * here if that is indeed the case.
 	 */
 	BUILD_BUG_ON(MIN_FDT_ALIGN < 8);
 	if (!dt_phys || dt_phys % MIN_FDT_ALIGN)
@@ -780,7 +778,7 @@ void *__init __fixmap_remap_fdt(phys_addr_t dt_phys, int *size, pgprot_t prot)
 	create_mapping_noalloc(round_down(dt_phys, SWAPPER_BLOCK_SIZE),
 			dt_virt_base, SWAPPER_BLOCK_SIZE, prot);
 
-	if (fdt_check_header(dt_virt) != 0)
+	if (fdt_magic(dt_virt) != FDT_MAGIC)
 		return NULL;
 
 	*size = fdt_totalsize(dt_virt);

@@ -190,7 +190,7 @@ int ima_appraise_measurement(enum ima_hooks func,
 {
 	static const char op[] = "appraise_data";
 	char *cause = "unknown";
-	struct dentry *dentry = file->f_path.dentry;
+	struct dentry *dentry = file_dentry(file);
 	struct inode *inode = d_backing_inode(dentry);
 	enum integrity_status status = INTEGRITY_UNKNOWN;
 	int rc = xattr_len, hash_start = 0;
@@ -275,6 +275,11 @@ out:
 		     xattr_value->type != EVM_IMA_XATTR_DIGSIG)) {
 			if (!ima_fix_xattr(dentry, iint))
 				status = INTEGRITY_PASS;
+		} else if ((inode->i_size == 0) &&
+			   (iint->flags & IMA_NEW_FILE) &&
+			   (xattr_value &&
+			    xattr_value->type == EVM_IMA_XATTR_DIGSIG)) {
+			status = INTEGRITY_PASS;
 		}
 		integrity_audit_msg(AUDIT_INTEGRITY_DATA, inode, filename,
 				    op, cause, rc, 0);
@@ -290,7 +295,7 @@ out:
  */
 void ima_update_xattr(struct integrity_iint_cache *iint, struct file *file)
 {
-	struct dentry *dentry = file->f_path.dentry;
+	struct dentry *dentry = file_dentry(file);
 	int rc = 0;
 
 	/* do not collect and update hash for digital signatures */
@@ -328,7 +333,7 @@ void ima_inode_post_setattr(struct dentry *dentry)
 	if (iint) {
 		iint->flags &= ~(IMA_APPRAISE | IMA_APPRAISED |
 				 IMA_APPRAISE_SUBMASK | IMA_APPRAISED_SUBMASK |
-				 IMA_ACTION_FLAGS);
+				 IMA_ACTION_RULE_FLAGS);
 		if (must_appraise)
 			iint->flags |= IMA_APPRAISE;
 	}

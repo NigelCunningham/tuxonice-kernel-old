@@ -433,6 +433,7 @@ static const struct pci_device_id iwl_hw_card_ids[] = {
 /* 8000 Series */
 	{IWL_PCI_DEVICE(0x24F3, 0x0010, iwl8260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24F3, 0x1010, iwl8260_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x24F3, 0x10B0, iwl8260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24F3, 0x0130, iwl8260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24F3, 0x1130, iwl8260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24F3, 0x0132, iwl8260_2ac_cfg)},
@@ -454,6 +455,8 @@ static const struct pci_device_id iwl_hw_card_ids[] = {
 	{IWL_PCI_DEVICE(0x24F3, 0xD010, iwl8260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24F3, 0xC050, iwl8260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24F3, 0xD050, iwl8260_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x24F3, 0xD0B0, iwl8260_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x24F3, 0xB0B0, iwl8260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24F3, 0x8010, iwl8260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24F3, 0x8110, iwl8260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24F3, 0x9010, iwl8260_2ac_cfg)},
@@ -481,6 +484,8 @@ static const struct pci_device_id iwl_hw_card_ids[] = {
 	{IWL_PCI_DEVICE(0x24FD, 0x0010, iwl8265_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24FD, 0x0110, iwl8265_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24FD, 0x1110, iwl8265_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x24FD, 0x1130, iwl8265_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x24FD, 0x0130, iwl8265_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24FD, 0x1010, iwl8265_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24FD, 0x0050, iwl8265_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24FD, 0x0150, iwl8265_2ac_cfg)},
@@ -491,19 +496,26 @@ static const struct pci_device_id iwl_hw_card_ids[] = {
 	{IWL_PCI_DEVICE(0x24FD, 0x0810, iwl8265_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24FD, 0x9110, iwl8265_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x24FD, 0x8130, iwl8265_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x24FD, 0x0910, iwl8265_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x24FD, 0x0930, iwl8265_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x24FD, 0x0950, iwl8265_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x24FD, 0x0850, iwl8265_2ac_cfg)},
 
 /* 9000 Series */
-	{IWL_PCI_DEVICE(0x9DF0, 0x2A10, iwl5165_2ac_cfg)},
-	{IWL_PCI_DEVICE(0x9DF0, 0x2010, iwl5165_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x2526, 0x0000, iwl9260_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x2526, 0x0010, iwl9260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x9DF0, 0x0A10, iwl9260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x9DF0, 0x0010, iwl9260_2ac_cfg)},
-	{IWL_PCI_DEVICE(0x9DF0, 0x0000, iwl5165_2ac_cfg)},
-	{IWL_PCI_DEVICE(0x9DF0, 0x0310, iwl5165_2ac_cfg)},
-	{IWL_PCI_DEVICE(0x9DF0, 0x0510, iwl5165_2ac_cfg)},
-	{IWL_PCI_DEVICE(0x9DF0, 0x0710, iwl5165_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x9DF0, 0x0210, iwl9260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x9DF0, 0x0410, iwl9260_2ac_cfg)},
 	{IWL_PCI_DEVICE(0x9DF0, 0x0610, iwl9260_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x9DF0, 0x0310, iwl5165_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x9DF0, 0x0000, iwl5165_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x9DF0, 0x0510, iwl5165_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x9DF0, 0x2010, iwl5165_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x2526, 0x1420, iwl5165_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x9DF0, 0x0710, iwl5165_2ac_cfg)},
+	{IWL_PCI_DEVICE(0x9DF0, 0x2A10, iwl5165_2ac_cfg)},
 #endif /* CONFIG_IWLMVM */
 
 	{0}
@@ -593,6 +605,7 @@ static int iwl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	const struct iwl_cfg *cfg = (struct iwl_cfg *)(ent->driver_data);
 	const struct iwl_cfg *cfg_7265d __maybe_unused = NULL;
+	const struct iwl_cfg *cfg_9260lc __maybe_unused = NULL;
 	struct iwl_trans *iwl_trans;
 	struct iwl_trans_pcie *trans_pcie;
 	int ret;
@@ -619,6 +632,15 @@ static int iwl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	    (iwl_trans->hw_rev & CSR_HW_REV_TYPE_MSK) == CSR_HW_REV_TYPE_7265D) {
 		cfg = cfg_7265d;
 		iwl_trans->cfg = cfg_7265d;
+	}
+
+	if (iwl_trans->cfg->rf_id) {
+		if (cfg == &iwl9260_2ac_cfg)
+			cfg_9260lc = &iwl9260lc_2ac_cfg;
+		if (cfg_9260lc && iwl_trans->hw_rf_id == CSR_HW_RF_ID_TYPE_LC) {
+			cfg = cfg_9260lc;
+			iwl_trans->cfg = cfg_9260lc;
+		}
 	}
 #endif
 
@@ -661,10 +683,8 @@ static int iwl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* The PCI device starts with a reference taken and we are
 	 * supposed to release it here.  But to simplify the
 	 * interaction with the opmode, we don't do it now, but let
-	 * the opmode release it when it's ready.  To account for this
-	 * reference, we start with ref_count set to 1.
+	 * the opmode release it when it's ready.
 	 */
-	trans_pcie->ref_count = 1;
 
 	return 0;
 

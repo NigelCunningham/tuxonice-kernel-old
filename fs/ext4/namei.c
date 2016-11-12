@@ -420,15 +420,14 @@ static __le32 ext4_dx_csum(struct inode *inode, struct ext4_dir_entry *dirent,
 	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
 	struct ext4_inode_info *ei = EXT4_I(inode);
 	__u32 csum;
-	__le32 save_csum;
 	int size;
+	__u32 dummy_csum = 0;
+	int offset = offsetof(struct dx_tail, dt_checksum);
 
 	size = count_offset + (count * sizeof(struct dx_entry));
-	save_csum = t->dt_checksum;
-	t->dt_checksum = 0;
 	csum = ext4_chksum(sbi, ei->i_csum_seed, (__u8 *)dirent, size);
-	csum = ext4_chksum(sbi, csum, (__u8 *)t, sizeof(struct dx_tail));
-	t->dt_checksum = save_csum;
+	csum = ext4_chksum(sbi, csum, (__u8 *)t, offset);
+	csum = ext4_chksum(sbi, csum, (__u8 *)&dummy_csum, sizeof(dummy_csum));
 
 	return cpu_to_le32(csum);
 }
@@ -1107,6 +1106,11 @@ int ext4_htree_fill_tree(struct file *dir_file, __u32 start_hash,
 	}
 
 	while (1) {
+		if (fatal_signal_pending(current)) {
+			err = -ERESTARTSYS;
+			goto errout;
+		}
+		cond_resched();
 		block = dx_get_block(frame->at);
 		ret = htree_dirblock_to_tree(dir_file, dir, block, &hinfo,
 					     start_hash, start_minor_hash);
@@ -1613,7 +1617,7 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, unsi
 			if (nokey)
 				return ERR_PTR(-ENOKEY);
 			ext4_warning(inode->i_sb,
-				     "Inconsistent encryption contexts: %lu/%lu\n",
+				     "Inconsistent encryption contexts: %lu/%lu",
 				     (unsigned long) dir->i_ino,
 				     (unsigned long) inode->i_ino);
 			return ERR_PTR(-EPERM);
@@ -1638,13 +1642,13 @@ struct dentry *ext4_get_parent(struct dentry *child)
 	ino = le32_to_cpu(de->inode);
 	brelse(bh);
 
-	if (!ext4_valid_inum(d_inode(child)->i_sb, ino)) {
+	if (!ext4_valid_inum(child->d_sb, ino)) {
 		EXT4_ERROR_INODE(d_inode(child),
 				 "bad parent inode number: %u", ino);
 		return ERR_PTR(-EFSCORRUPTED);
 	}
 
-	return d_obtain_alias(ext4_iget_normal(d_inode(child)->i_sb, ino));
+	return d_obtain_alias(ext4_iget_normal(child->d_sb, ino));
 }
 
 /*
@@ -2039,33 +2043,31 @@ static int make_indexed_dir(handle_t *handle, struct ext4_filename *fname,
 	frame->entries = entries;
 	frame->at = entries;
 	frame->bh = bh;
-	bh = bh2;
 
 	retval = ext4_handle_dirty_dx_node(handle, dir, frame->bh);
 	if (retval)
 		goto out_frames;	
-	retval = ext4_handle_dirty_dirent_node(handle, dir, bh);
+	retval = ext4_handle_dirty_dirent_node(handle, dir, bh2);
 	if (retval)
 		goto out_frames;	
 
-	de = do_split(handle,dir, &bh, frame, &fname->hinfo);
+	de = do_split(handle,dir, &bh2, frame, &fname->hinfo);
 	if (IS_ERR(de)) {
 		retval = PTR_ERR(de);
 		goto out_frames;
 	}
-	dx_release(frames);
 
-	retval = add_dirent_to_buf(handle, fname, dir, inode, de, bh);
-	brelse(bh);
-	return retval;
+	retval = add_dirent_to_buf(handle, fname, dir, inode, de, bh2);
 out_frames:
 	/*
 	 * Even if the block split failed, we have to properly write
 	 * out all the changes we did so far. Otherwise we can end up
 	 * with corrupted filesystem.
 	 */
-	ext4_mark_inode_dirty(handle, dir);
+	if (retval)
+		ext4_mark_inode_dirty(handle, dir);
 	dx_release(frames);
+	brelse(bh2);
 	return retval;
 }
 
@@ -2828,7 +2830,7 @@ int ext4_orphan_add(handle_t *handle, struct inode *inode)
 			 * list entries can cause panics at unmount time.
 			 */
 			mutex_lock(&sbi->s_orphan_lock);
-			list_del(&EXT4_I(inode)->i_orphan);
+			list_del_init(&EXT4_I(inode)->i_orphan);
 			mutex_unlock(&sbi->s_orphan_lock);
 		}
 	}

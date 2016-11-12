@@ -333,6 +333,7 @@ configfs_write_bin_file(struct file *file, const char __user *buf,
 		if (bin_attr->cb_max_size &&
 			*ppos + count > bin_attr->cb_max_size) {
 			len = -EFBIG;
+			goto out;
 		}
 
 		tbuf = vmalloc(*ppos + count);
@@ -357,8 +358,6 @@ configfs_write_bin_file(struct file *file, const char __user *buf,
 
 	len = simple_write_to_buffer(buffer->bin_buffer,
 			buffer->bin_buffer_size, ppos, buf, count);
-	if (len > 0)
-		*ppos += len;
 out:
 	mutex_unlock(&buffer->mutex);
 	return len;

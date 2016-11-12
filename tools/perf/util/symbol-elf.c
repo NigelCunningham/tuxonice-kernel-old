@@ -709,17 +709,10 @@ int symsrc__init(struct symsrc *ss, struct dso *dso, const char *name,
 	if (ss->opdshdr.sh_type != SHT_PROGBITS)
 		ss->opdsec = NULL;
 
-	if (dso->kernel == DSO_TYPE_USER) {
-		GElf_Shdr shdr;
-		ss->adjust_symbols = (ehdr.e_type == ET_EXEC ||
-				ehdr.e_type == ET_REL ||
-				dso__is_vdso(dso) ||
-				elf_section_by_name(elf, &ehdr, &shdr,
-						     ".gnu.prelink_undo",
-						     NULL) != NULL);
-	} else {
+	if (dso->kernel == DSO_TYPE_USER)
+		ss->adjust_symbols = true;
+	else
 		ss->adjust_symbols = elf__needs_adjust_symbols(ehdr);
-	}
 
 	ss->name   = strdup(name);
 	if (!ss->name) {
@@ -777,7 +770,8 @@ static bool want_demangle(bool is_kernel_sym)
 	return is_kernel_sym ? symbol_conf.demangle_kernel : symbol_conf.demangle;
 }
 
-void __weak arch__elf_sym_adjust(GElf_Sym *sym __maybe_unused) { }
+void __weak arch__sym_update(struct symbol *s __maybe_unused,
+		GElf_Sym *sym __maybe_unused) { }
 
 int dso__load_sym(struct dso *dso, struct map *map,
 		  struct symsrc *syms_ss, struct symsrc *runtime_ss,
@@ -833,7 +827,8 @@ int dso__load_sym(struct dso *dso, struct map *map,
 	sec = syms_ss->symtab;
 	shdr = syms_ss->symshdr;
 
-	if (elf_section_by_name(elf, &ehdr, &tshdr, ".text", NULL))
+	if (elf_section_by_name(runtime_ss->elf, &runtime_ss->ehdr, &tshdr,
+				".text", NULL))
 		dso->text_offset = tshdr.sh_addr - tshdr.sh_offset;
 
 	if (runtime_ss->opdsec)
@@ -953,8 +948,6 @@ int dso__load_sym(struct dso *dso, struct map *map,
 		    (map->type == MAP__FUNCTION) &&
 		    (sym.st_value & 1))
 			--sym.st_value;
-
-		arch__elf_sym_adjust(&sym);
 
 		if (dso->kernel || kmodule) {
 			char dso_name[PATH_MAX];
@@ -1088,6 +1081,8 @@ new_symbol:
 		free(demangled);
 		if (!f)
 			goto out_elf_end;
+
+		arch__sym_update(f, &sym);
 
 		if (filter && filter(curr_map, f))
 			symbol__delete(f);

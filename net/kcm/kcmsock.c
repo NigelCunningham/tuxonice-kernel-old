@@ -13,6 +13,7 @@
 #include <linux/socket.h>
 #include <linux/uaccess.h>
 #include <linux/workqueue.h>
+#include <linux/syscalls.h>
 #include <net/kcm.h>
 #include <net/netns/generic.h>
 #include <net/sock.h>
@@ -1483,7 +1484,7 @@ static ssize_t kcm_splice_read(struct socket *sock, loff_t *ppos,
 	long timeo;
 	struct kcm_rx_msg *rxm;
 	int err = 0;
-	size_t copied;
+	ssize_t copied;
 	struct sk_buff *skb;
 
 	/* Only support splice for SOCKSEQPACKET */
@@ -2035,7 +2036,7 @@ static int kcm_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 			if (copy_to_user((void __user *)arg, &info,
 					 sizeof(info))) {
 				err = -EFAULT;
-				sock_release(newsock);
+				sys_close(info.fd);
 			}
 		}
 

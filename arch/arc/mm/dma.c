@@ -10,7 +10,7 @@
  * DMA Coherent API Notes
  *
  * I/O is inherently non-coherent on ARC. So a coherent DMA buffer is
- * implemented by accessintg it using a kernel virtual address, with
+ * implemented by accessing it using a kernel virtual address, with
  * Cache bit off in the TLB entry.
  *
  * The default DMA address == Phy address which is 0x8000_0000 based.
@@ -92,7 +92,8 @@ static void *arc_dma_alloc(struct device *dev, size_t size,
 static void arc_dma_free(struct device *dev, size_t size, void *vaddr,
 		dma_addr_t dma_handle, struct dma_attrs *attrs)
 {
-	struct page *page = virt_to_page(dma_handle);
+	phys_addr_t paddr = plat_dma_to_phys(dev, dma_handle);
+	struct page *page = virt_to_page(paddr);
 	int is_non_coh = 1;
 
 	is_non_coh = dma_get_attr(DMA_ATTR_NON_CONSISTENT, attrs) ||
