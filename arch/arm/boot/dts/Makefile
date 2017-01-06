@@ -102,6 +102,7 @@ kirkwood := \
 	kirkwood-ds109.dtb \
 	kirkwood-ds110jv10.dtb \
 	kirkwood-ds111.dtb \
+	kirkwood-ds112.dtb \
 	kirkwood-ds209.dtb \
 	kirkwood-ds210.dtb \
 	kirkwood-ds212.dtb \
@@ -131,6 +132,7 @@ kirkwood := \
 	kirkwood-ns2mini.dtb \
 	kirkwood-nsa310.dtb \
 	kirkwood-nsa310a.dtb \
+	kirkwood-nsa320.dtb \
 	kirkwood-openblocks_a6.dtb \
 	kirkwood-openblocks_a7.dtb \
 	kirkwood-openrd-base.dtb \

@@ -1,6 +1,4 @@
 /*
- * Copyright (C) 2012 ARM Ltd.
- *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
@@ -10,15 +8,21 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 ARM Limited
+ *
+ * Author: Will Deacon <will.deacon@arm.com>
  */
-#ifndef __ASM_AUXVEC_H
-#define __ASM_AUXVEC_H
 
-/* vDSO location */
-#define AT_SYSINFO_EHDR	33
+#include <linux/linkage.h>
 
-#define AT_VECTOR_SIZE_ARCH 1 /* entries in ARCH_DLINFO */
+/* int __invoke_psci_fn_hvc(u64 function_id, u64 arg0, u64 arg1, u64 arg2) */
+ENTRY(__invoke_psci_fn_hvc)
+	hvc	#0
+	ret
+ENDPROC(__invoke_psci_fn_hvc)
 
-#endif
+/* int __invoke_psci_fn_smc(u64 function_id, u64 arg0, u64 arg1, u64 arg2) */
+ENTRY(__invoke_psci_fn_smc)
+	smc	#0
+	ret
+ENDPROC(__invoke_psci_fn_smc)

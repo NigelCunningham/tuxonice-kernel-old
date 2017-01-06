@@ -87,7 +87,7 @@ int sysctl_tcp_adv_win_scale __read_mostly = 1;
 EXPORT_SYMBOL(sysctl_tcp_adv_win_scale);
 
 /* rfc5961 challenge ack rate limiting */
-int sysctl_tcp_challenge_ack_limit = 100;
+int sysctl_tcp_challenge_ack_limit = 1000;
 
 int sysctl_tcp_stdurg __read_mostly;
 int sysctl_tcp_rfc1337 __read_mostly;
@@ -2316,10 +2316,9 @@ static void DBGUNDO(struct sock *sk, const char *msg)
 	}
 #if IS_ENABLED(CONFIG_IPV6)
 	else if (sk->sk_family == AF_INET6) {
-		struct ipv6_pinfo *np = inet6_sk(sk);
 		pr_debug("Undo %s %pI6/%u c%u l%u ss%u/%u p%u\n",
 			 msg,
-			 &np->daddr, ntohs(inet->inet_dport),
+			 &sk->sk_v6_daddr, ntohs(inet->inet_dport),
 			 tp->snd_cwnd, tcp_left_out(tp),
 			 tp->snd_ssthresh, tp->prior_ssthresh,
 			 tp->packets_out);
@@ -3285,13 +3284,18 @@ static void tcp_send_challenge_ack(struct sock *sk)
 	/* unprotected vars, we dont care of overwrites */
 	static u32 challenge_timestamp;
 	static unsigned int challenge_count;
-	u32 now = jiffies / HZ;
+	u32 count, now = jiffies / HZ;
 
 	if (now != challenge_timestamp) {
+		u32 half = (sysctl_tcp_challenge_ack_limit + 1) >> 1;
+
 		challenge_timestamp = now;
-		challenge_count = 0;
+		ACCESS_ONCE(challenge_count) =
+			half + prandom_u32_max(sysctl_tcp_challenge_ack_limit);
 	}
-	if (++challenge_count <= sysctl_tcp_challenge_ack_limit) {
+	count = ACCESS_ONCE(challenge_count);
+	if (count > 0) {
+		ACCESS_ONCE(challenge_count) = count - 1;
 		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPCHALLENGEACK);
 		tcp_send_ack(sk);
 	}

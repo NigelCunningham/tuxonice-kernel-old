@@ -176,8 +176,10 @@ batadv_tt_global_hash_find(struct batadv_priv *bat_priv, const uint8_t *addr,
 static void
 batadv_tt_local_entry_free_ref(struct batadv_tt_local_entry *tt_local_entry)
 {
-	if (atomic_dec_and_test(&tt_local_entry->common.refcount))
+	if (atomic_dec_and_test(&tt_local_entry->common.refcount)) {
+		batadv_softif_vlan_free_ref(tt_local_entry->vlan);
 		kfree_rcu(tt_local_entry, common.rcu);
+	}
 }
 
 /**
@@ -574,9 +576,14 @@ bool batadv_tt_local_add(struct net_device *soft_iface, const uint8_t *addr,
 
 	/* increase the refcounter of the related vlan */
 	vlan = batadv_softif_vlan_get(bat_priv, vid);
-	if (WARN(!vlan, "adding TT local entry %pM to non-existent VLAN %d",
-		 addr, BATADV_PRINT_VID(vid)))
+	if (!vlan) {
+		net_ratelimited_function(batadv_info, soft_iface,
+					 "adding TT local entry %pM to non-existent VLAN %d\n",
+					 addr, BATADV_PRINT_VID(vid));
+		kfree(tt_local);
+		tt_local = NULL;
 		goto out;
+	}
 
 	batadv_dbg(BATADV_DBG_TT, bat_priv,
 		   "Creating new local tt entry: %pM (vid: %d, ttvn: %d)\n",
@@ -595,6 +602,7 @@ bool batadv_tt_local_add(struct net_device *soft_iface, const uint8_t *addr,
 	atomic_set(&tt_local->common.refcount, 2);
 	tt_local->last_seen = jiffies;
 	tt_local->common.added_at = tt_local->last_seen;
+	tt_local->vlan = vlan;
 
 	/* the batman interface mac and multicast addresses should never be
 	 * purged
@@ -610,7 +618,6 @@ bool batadv_tt_local_add(struct net_device *soft_iface, const uint8_t *addr,
 	if (unlikely(hash_added != 0)) {
 		/* remove the reference for the hash */
 		batadv_tt_local_entry_free_ref(tt_local);
-		batadv_softif_vlan_free_ref(vlan);
 		goto out;
 	}
 
@@ -908,7 +915,6 @@ int batadv_tt_local_seq_print_text(struct seq_file *seq, void *offset)
 	struct batadv_tt_common_entry *tt_common_entry;
 	struct batadv_tt_local_entry *tt_local;
 	struct batadv_hard_iface *primary_if;
-	struct batadv_softif_vlan *vlan;
 	struct hlist_head *head;
 	unsigned short vid;
 	uint32_t i;
@@ -944,14 +950,6 @@ int batadv_tt_local_seq_print_text(struct seq_file *seq, void *offset)
 			last_seen_msecs = last_seen_msecs % 1000;
 
 			no_purge = tt_common_entry->flags & np_flag;
-
-			vlan = batadv_softif_vlan_get(bat_priv, vid);
-			if (!vlan) {
-				seq_printf(seq, "Cannot retrieve VLAN %d\n",
-					   BATADV_PRINT_VID(vid));
-				continue;
-			}
-
 			seq_printf(seq,
 				   " * %pM %4i [%c%c%c%c%c%c] %3u.%03u   (%#.8x)\n",
 				   tt_common_entry->addr,
@@ -969,9 +967,7 @@ int batadv_tt_local_seq_print_text(struct seq_file *seq, void *offset)
 				    BATADV_TT_CLIENT_ISOLA ? 'I' : '.'),
 				   no_purge ? 0 : last_seen_secs,
 				   no_purge ? 0 : last_seen_msecs,
-				   vlan->tt.crc);
-
-			batadv_softif_vlan_free_ref(vlan);
+				   tt_local->vlan->tt.crc);
 		}
 		rcu_read_unlock();
 	}
@@ -1016,7 +1012,6 @@ uint16_t batadv_tt_local_remove(struct batadv_priv *bat_priv,
 {
 	struct batadv_tt_local_entry *tt_local_entry;
 	uint16_t flags, curr_flags = BATADV_NO_FLAGS;
-	struct batadv_softif_vlan *vlan;
 	void *tt_entry_exists;
 
 	tt_local_entry = batadv_tt_local_hash_find(bat_priv, addr, vid);
@@ -1055,14 +1050,6 @@ uint16_t batadv_tt_local_remove(struct batadv_priv *bat_priv,
 
 	/* extra call to free the local tt entry */
 	batadv_tt_local_entry_free_ref(tt_local_entry);
-
-	/* decrease the reference held for this vlan */
-	vlan = batadv_softif_vlan_get(bat_priv, vid);
-	if (!vlan)
-		goto out;
-
-	batadv_softif_vlan_free_ref(vlan);
-	batadv_softif_vlan_free_ref(vlan);
 
 out:
 	if (tt_local_entry)
@@ -1136,7 +1123,6 @@ static void batadv_tt_local_table_free(struct batadv_priv *bat_priv)
 	spinlock_t *list_lock; /* protects write access to the hash lists */
 	struct batadv_tt_common_entry *tt_common_entry;
 	struct batadv_tt_local_entry *tt_local;
-	struct batadv_softif_vlan *vlan;
 	struct hlist_node *node_tmp;
 	struct hlist_head *head;
 	uint32_t i;
@@ -1157,14 +1143,6 @@ static void batadv_tt_local_table_free(struct batadv_priv *bat_priv)
 			tt_local = container_of(tt_common_entry,
 						struct batadv_tt_local_entry,
 						common);
-
-			/* decrease the reference held for this vlan */
-			vlan = batadv_softif_vlan_get(bat_priv,
-						      tt_common_entry->vid);
-			if (vlan) {
-				batadv_softif_vlan_free_ref(vlan);
-				batadv_softif_vlan_free_ref(vlan);
-			}
 
 			batadv_tt_local_entry_free_ref(tt_local);
 		}
@@ -2186,6 +2164,29 @@ static uint32_t batadv_tt_local_crc(struct batadv_priv *bat_priv,
 	return crc;
 }
 
+/**
+ * batadv_tt_req_node_release - free tt_req node entry
+ * @ref: kref pointer of the tt req_node entry
+ */
+static void batadv_tt_req_node_release(struct kref *ref)
+{
+	struct batadv_tt_req_node *tt_req_node;
+
+	tt_req_node = container_of(ref, struct batadv_tt_req_node, refcount);
+
+	kfree(tt_req_node);
+}
+
+/**
+ * batadv_tt_req_node_put - decrement the tt_req_node refcounter and
+ *  possibly release it
+ * @tt_req_node: tt_req_node to be free'd
+ */
+static void batadv_tt_req_node_put(struct batadv_tt_req_node *tt_req_node)
+{
+	kref_put(&tt_req_node->refcount, batadv_tt_req_node_release);
+}
+
 static void batadv_tt_req_list_free(struct batadv_priv *bat_priv)
 {
 	struct batadv_tt_req_node *node, *safe;
@@ -2194,7 +2195,7 @@ static void batadv_tt_req_list_free(struct batadv_priv *bat_priv)
 
 	list_for_each_entry_safe(node, safe, &bat_priv->tt.req_list, list) {
 		list_del(&node->list);
-		kfree(node);
+		batadv_tt_req_node_put(node);
 	}
 
 	spin_unlock_bh(&bat_priv->tt.req_list_lock);
@@ -2230,7 +2231,7 @@ static void batadv_tt_req_purge(struct batadv_priv *bat_priv)
 		if (batadv_has_timed_out(node->issued_at,
 					 BATADV_TT_REQUEST_TIMEOUT)) {
 			list_del(&node->list);
-			kfree(node);
+			batadv_tt_req_node_put(node);
 		}
 	}
 	spin_unlock_bh(&bat_priv->tt.req_list_lock);
@@ -2257,9 +2258,11 @@ batadv_new_tt_req_node(struct batadv_priv *bat_priv,
 	if (!tt_req_node)
 		goto unlock;
 
+	kref_init(&tt_req_node->refcount);
 	ether_addr_copy(tt_req_node->addr, orig_node->orig);
 	tt_req_node->issued_at = jiffies;
 
+	kref_get(&tt_req_node->refcount);
 	list_add(&tt_req_node->list, &bat_priv->tt.req_list);
 unlock:
 	spin_unlock_bh(&bat_priv->tt.req_list_lock);
@@ -2509,12 +2512,19 @@ static int batadv_send_tt_request(struct batadv_priv *bat_priv,
 out:
 	if (primary_if)
 		batadv_hardif_free_ref(primary_if);
+
 	if (ret && tt_req_node) {
 		spin_lock_bh(&bat_priv->tt.req_list_lock);
-		list_del(&tt_req_node->list);
+		if (!list_empty(&tt_req_node->list)) {
+			list_del(&tt_req_node->list);
+			batadv_tt_req_node_put(tt_req_node);
+		}
 		spin_unlock_bh(&bat_priv->tt.req_list_lock);
-		kfree(tt_req_node);
 	}
+
+	if (tt_req_node)
+		batadv_tt_req_node_put(tt_req_node);
+
 	kfree(tvlv_tt_data);
 	return ret;
 }
@@ -2950,7 +2960,7 @@ static void batadv_handle_tt_response(struct batadv_priv *bat_priv,
 		if (!batadv_compare_eth(node->addr, resp_src))
 			continue;
 		list_del(&node->list);
-		kfree(node);
+		batadv_tt_req_node_put(node);
 	}
 
 	spin_unlock_bh(&bat_priv->tt.req_list_lock);
@@ -3174,7 +3184,6 @@ static void batadv_tt_local_purge_pending_clients(struct batadv_priv *bat_priv)
 	struct batadv_hashtable *hash = bat_priv->tt.local_hash;
 	struct batadv_tt_common_entry *tt_common;
 	struct batadv_tt_local_entry *tt_local;
-	struct batadv_softif_vlan *vlan;
 	struct hlist_node *node_tmp;
 	struct hlist_head *head;
 	spinlock_t *list_lock; /* protects write access to the hash lists */
@@ -3203,13 +3212,6 @@ static void batadv_tt_local_purge_pending_clients(struct batadv_priv *bat_priv)
 			tt_local = container_of(tt_common,
 						struct batadv_tt_local_entry,
 						common);
-
-			/* decrease the reference held for this vlan */
-			vlan = batadv_softif_vlan_get(bat_priv, tt_common->vid);
-			if (vlan) {
-				batadv_softif_vlan_free_ref(vlan);
-				batadv_softif_vlan_free_ref(vlan);
-			}
 
 			batadv_tt_local_entry_free_ref(tt_local);
 		}

@@ -1439,9 +1439,7 @@ static void _enable_sysc(struct omap_hwmod *oh)
 	    (sf & SYSC_HAS_CLOCKACTIVITY))
 		_set_clockactivity(oh, oh->class->sysc->clockact, &v);
 
-	/* If the cached value is the same as the new value, skip the write */
-	if (oh->_sysc_cache != v)
-		_write_sysconfig(v, oh);
+	_write_sysconfig(v, oh);
 
 	/*
 	 * Set the autoidle bit only after setting the smartidle bit
@@ -1504,7 +1502,9 @@ static void _idle_sysc(struct omap_hwmod *oh)
 		_set_master_standbymode(oh, idlemode, &v);
 	}
 
-	_write_sysconfig(v, oh);
+	/* If the cached value is the same as the new value, skip the write */
+	if (oh->_sysc_cache != v)
+		_write_sysconfig(v, oh);
 }
 
 /**
@@ -1946,7 +1946,9 @@ static int _ocp_softreset(struct omap_hwmod *oh)
 	if (ret)
 		goto dis_opt_clks;
 
-	_write_sysconfig(v, oh);
+	/* If the cached value is the same as the new value, skip the write */
+	if (oh->_sysc_cache != v)
+		_write_sysconfig(v, oh);
 
 	if (oh->class->sysc->srst_udelay)
 		udelay(oh->class->sysc->srst_udelay);
@@ -2261,14 +2263,14 @@ static int _idle(struct omap_hwmod *oh)
 {
 	pr_debug("omap_hwmod: %s: idling\n", oh->name);
 
+	if (_are_all_hardreset_lines_asserted(oh))
+		return 0;
+
 	if (oh->_state != _HWMOD_STATE_ENABLED) {
 		WARN(1, "omap_hwmod: %s: idle state can only be entered from enabled state\n",
 			oh->name);
 		return -EINVAL;
 	}
-
-	if (_are_all_hardreset_lines_asserted(oh))
-		return 0;
 
 	if (oh->class->sysc)
 		_idle_sysc(oh);
@@ -2316,15 +2318,15 @@ static int _shutdown(struct omap_hwmod *oh)
 	int ret, i;
 	u8 prev_state;
 
+	if (_are_all_hardreset_lines_asserted(oh))
+		return 0;
+
 	if (oh->_state != _HWMOD_STATE_IDLE &&
 	    oh->_state != _HWMOD_STATE_ENABLED) {
 		WARN(1, "omap_hwmod: %s: disabled state can only be entered from idle, or enabled state\n",
 			oh->name);
 		return -EINVAL;
 	}
-
-	if (_are_all_hardreset_lines_asserted(oh))
-		return 0;
 
 	pr_debug("omap_hwmod: %s: disabling\n", oh->name);
 

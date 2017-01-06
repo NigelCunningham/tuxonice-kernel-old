@@ -30,6 +30,7 @@
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/radeon_drm.h>
+#include <linux/pm_runtime.h>
 #include <linux/vgaarb.h>
 #include <linux/vga_switcheroo.h>
 #include <linux/efi.h>
@@ -598,6 +599,23 @@ void radeon_gtt_location(struct radeon_device *rdev, struct radeon_mc *mc)
 /*
  * GPU helpers function.
  */
+
+/**
+ * radeon_device_is_virtual - check if we are running is a virtual environment
+ *
+ * Check if the asic has been passed through to a VM (all asics).
+ * Used at driver startup.
+ * Returns true if virtual or false if not.
+ */
+static bool radeon_device_is_virtual(void)
+{
+#ifdef CONFIG_X86
+	return boot_cpu_has(X86_FEATURE_HYPERVISOR);
+#else
+	return false;
+#endif
+}
+
 /**
  * radeon_card_posted - check if the hw has already been initialized
  *
@@ -610,6 +628,10 @@ void radeon_gtt_location(struct radeon_device *rdev, struct radeon_mc *mc)
 bool radeon_card_posted(struct radeon_device *rdev)
 {
 	uint32_t reg;
+
+	/* for pass through, always force asic_init */
+	if (radeon_device_is_virtual())
+		return false;
 
 	/* required for EFI mode on macbook2,1 which uses an r5xx asic */
 	if (efi_enabled(EFI_BOOT) &&
@@ -1444,6 +1466,9 @@ int radeon_device_init(struct radeon_device *rdev,
 	return 0;
 
 failed:
+	/* balance pm_runtime_get_sync() in radeon_driver_unload_kms() */
+	if (radeon_is_px(ddev))
+		pm_runtime_put_noidle(ddev->dev);
 	if (runtime)
 		vga_switcheroo_fini_domain_pm_ops(rdev->dev);
 	return r;

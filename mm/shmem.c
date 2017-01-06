@@ -540,7 +540,7 @@ static int shmem_setattr(struct dentry *dentry, struct iattr *attr)
 	struct inode *inode = dentry->d_inode;
 	int error;
 
-	error = inode_change_ok(inode, attr);
+	error = setattr_prepare(dentry, attr);
 	if (error)
 		return error;
 
@@ -1867,9 +1867,11 @@ static long shmem_fallocate(struct file *file, int mode, loff_t offset,
 									NULL);
 		if (error) {
 			/* Remove the !PageUptodate pages we added */
-			shmem_undo_range(inode,
-				(loff_t)start << PAGE_CACHE_SHIFT,
-				(loff_t)index << PAGE_CACHE_SHIFT, true);
+			if (index > start) {
+				shmem_undo_range(inode,
+				    (loff_t)start << PAGE_CACHE_SHIFT,
+				    ((loff_t)index << PAGE_CACHE_SHIFT) - 1, true);
+			}
 			goto undone;
 		}
 

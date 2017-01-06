@@ -999,6 +999,13 @@ inline int task_curr(const struct task_struct *p)
 	return cpu_curr(task_cpu(p)) == p;
 }
 
+/*
+ * switched_from, switched_to and prio_changed must _NOT_ drop rq->lock,
+ * use the balance_callback list if you want balancing.
+ *
+ * this means any call to check_class_changed() must be followed by a call to
+ * balance_callback().
+ */
 static inline void check_class_changed(struct rq *rq, struct task_struct *p,
 				       const struct sched_class *prev_class,
 				       int oldprio)
@@ -1500,8 +1507,12 @@ ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags)
 
 	p->state = TASK_RUNNING;
 #ifdef CONFIG_SMP
-	if (p->sched_class->task_woken)
+	if (p->sched_class->task_woken) {
+		/*
+		 * XXX can drop rq->lock; most likely ok.
+		 */
 		p->sched_class->task_woken(rq, p);
+	}
 
 	if (rq->idle_stamp) {
 		u64 delta = rq_clock(rq) - rq->idle_stamp;
@@ -1685,6 +1696,28 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	success = 1; /* we're going to change ->state */
 	cpu = task_cpu(p);
 
+	/*
+	 * Ensure we load p->on_rq _after_ p->state, otherwise it would
+	 * be possible to, falsely, observe p->on_rq == 0 and get stuck
+	 * in smp_cond_load_acquire() below.
+	 *
+	 * sched_ttwu_pending()                 try_to_wake_up()
+	 *   [S] p->on_rq = 1;                  [L] P->state
+	 *       UNLOCK rq->lock  -----.
+	 *                              \
+	 *				 +---   RMB
+	 * schedule()                   /
+	 *       LOCK rq->lock    -----'
+	 *       UNLOCK rq->lock
+	 *
+	 * [task p]
+	 *   [S] p->state = UNINTERRUPTIBLE     [L] p->on_rq
+	 *
+	 * Pairs with the UNLOCK+LOCK on rq->lock from the
+	 * last wakeup of our task and the schedule that got our task
+	 * current.
+	 */
+	smp_rmb();
 	if (p->on_rq && ttwu_remote(p, wake_flags))
 		goto stat;
 
@@ -2258,23 +2291,35 @@ static void finish_task_switch(struct rq *rq, struct task_struct *prev)
 #ifdef CONFIG_SMP
 
 /* rq->lock is NOT held, but preemption is disabled */
-static inline void post_schedule(struct rq *rq)
+static void __balance_callback(struct rq *rq)
 {
-	if (rq->post_schedule) {
-		unsigned long flags;
+	struct callback_head *head, *next;
+	void (*func)(struct rq *rq);
+	unsigned long flags;
 
-		raw_spin_lock_irqsave(&rq->lock, flags);
-		if (rq->curr->sched_class->post_schedule)
-			rq->curr->sched_class->post_schedule(rq);
-		raw_spin_unlock_irqrestore(&rq->lock, flags);
+	raw_spin_lock_irqsave(&rq->lock, flags);
+	head = rq->balance_callback;
+	rq->balance_callback = NULL;
+	while (head) {
+		func = (void (*)(struct rq *))head->func;
+		next = head->next;
+		head->next = NULL;
+		head = next;
 
-		rq->post_schedule = 0;
+		func(rq);
 	}
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
+}
+
+static inline void balance_callback(struct rq *rq)
+{
+	if (unlikely(rq->balance_callback))
+		__balance_callback(rq);
 }
 
 #else
 
-static inline void post_schedule(struct rq *rq)
+static inline void balance_callback(struct rq *rq)
 {
 }
 
@@ -2295,7 +2340,7 @@ asmlinkage __visible void schedule_tail(struct task_struct *prev)
 	 * FIXME: do we need to worry about rq being invalidated by the
 	 * task_switch?
 	 */
-	post_schedule(rq);
+	balance_callback(rq);
 
 #ifdef __ARCH_WANT_UNLOCKED_CTXSW
 	/* In this case, finish_task_switch does not reenable preemption */
@@ -2822,7 +2867,7 @@ need_resched:
 	} else
 		raw_spin_unlock_irq(&rq->lock);
 
-	post_schedule(rq);
+	balance_callback(rq);
 
 	sched_preempt_enable_no_resched();
 	if (need_resched())
@@ -3040,7 +3085,11 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 
 	check_class_changed(rq, p, prev_class, oldprio);
 out_unlock:
+	preempt_disable(); /* avoid rq from going away on us */
 	__task_rq_unlock(rq);
+
+	balance_callback(rq);
+	preempt_enable();
 }
 #endif
 
@@ -3563,9 +3612,16 @@ change:
 	}
 
 	check_class_changed(rq, p, prev_class, oldprio);
+	preempt_disable(); /* avoid rq from going away on us */
 	task_rq_unlock(rq, p, &flags);
 
 	rt_mutex_adjust_pi(p);
+
+	/*
+	 * Run balance callbacks after we've adjusted the PI chain.
+	 */
+	balance_callback(rq);
+	preempt_enable();
 
 	return 0;
 }
@@ -4514,13 +4570,15 @@ void show_state_filter(unsigned long state_filter)
 		/*
 		 * reset the NMI-timeout, listing all files on a slow
 		 * console might take a lot of time:
+		 * Also, reset softlockup watchdogs on all CPUs, because
+		 * another CPU might be blocked waiting for us to process
+		 * an IPI.
 		 */
 		touch_nmi_watchdog();
+		touch_all_softlockup_watchdogs();
 		if (!state_filter || (p->state & state_filter))
 			sched_show_task(p);
 	} while_each_thread(g, p);
-
-	touch_all_softlockup_watchdogs();
 
 #ifdef CONFIG_SCHED_DEBUG
 	sysrq_sched_debug_show();
@@ -5111,7 +5169,6 @@ migration_call(struct notifier_block *nfb, unsigned long action, void *hcpu)
 
 	case CPU_UP_PREPARE:
 		rq->calc_load_update = calc_load_update;
-		account_reset_rq(rq);
 		break;
 
 	case CPU_ONLINE:
@@ -7001,7 +7058,7 @@ void __init sched_init(void)
 		rq->sd = NULL;
 		rq->rd = NULL;
 		rq->cpu_capacity = SCHED_CAPACITY_SCALE;
-		rq->post_schedule = 0;
+		rq->balance_callback = NULL;
 		rq->active_balance = 0;
 		rq->next_balance = jiffies;
 		rq->push_cpu = 0;

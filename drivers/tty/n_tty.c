@@ -2251,15 +2251,14 @@ static ssize_t n_tty_read(struct tty_struct *tty, struct file *file,
 			ldata->minimum_to_wake = (minimum - (b - buf));
 
 		if (!input_available_p(tty, 0)) {
-			if (test_bit(TTY_OTHER_CLOSED, &tty->flags)) {
-				up_read(&tty->termios_rwsem);
-				tty_flush_to_ldisc(tty);
-				down_read(&tty->termios_rwsem);
-				if (!input_available_p(tty, 0)) {
+			up_read(&tty->termios_rwsem);
+			tty_flush_to_ldisc(tty);
+			down_read(&tty->termios_rwsem);
+			if (!input_available_p(tty, 0)) {
+				if (test_bit(TTY_OTHER_CLOSED, &tty->flags)) {
 					retval = -EIO;
 					break;
 				}
-			} else {
 				if (tty_hung_up_p(file))
 					break;
 				if (!timeout)
@@ -2465,17 +2464,17 @@ static unsigned int n_tty_poll(struct tty_struct *tty, struct file *file,
 
 	poll_wait(file, &tty->read_wait, wait);
 	poll_wait(file, &tty->write_wait, wait);
-	if (test_bit(TTY_OTHER_CLOSED, &tty->flags))
-		mask |= POLLHUP;
 	if (input_available_p(tty, 1))
 		mask |= POLLIN | POLLRDNORM;
-	else if (mask & POLLHUP) {
+	else {
 		tty_flush_to_ldisc(tty);
 		if (input_available_p(tty, 1))
 			mask |= POLLIN | POLLRDNORM;
 	}
 	if (tty->packet && tty->link->ctrl_status)
 		mask |= POLLPRI | POLLIN | POLLRDNORM;
+	if (test_bit(TTY_OTHER_CLOSED, &tty->flags))
+		mask |= POLLHUP;
 	if (tty_hung_up_p(file))
 		mask |= POLLHUP;
 	if (!(mask & (POLLHUP | POLLIN | POLLRDNORM))) {

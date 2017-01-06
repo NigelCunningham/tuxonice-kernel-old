@@ -378,11 +378,17 @@ void batadv_interface_rx(struct net_device *soft_iface,
 	 */
 	nf_reset(skb);
 
+	if (unlikely(!pskb_may_pull(skb, ETH_HLEN)))
+		goto dropped;
+
 	vid = batadv_get_vid(skb, 0);
 	ethhdr = eth_hdr(skb);
 
 	switch (ntohs(ethhdr->h_proto)) {
 	case ETH_P_8021Q:
+		if (!pskb_may_pull(skb, VLAN_ETH_HLEN))
+			goto dropped;
+
 		vhdr = (struct vlan_ethhdr *)skb->data;
 
 		if (vhdr->h_vlan_encapsulated_proto != ethertype)
@@ -394,8 +400,6 @@ void batadv_interface_rx(struct net_device *soft_iface,
 	}
 
 	/* skb->dev & skb->pkt_type are set here */
-	if (unlikely(!pskb_may_pull(skb, ETH_HLEN)))
-		goto dropped;
 	skb->protocol = eth_type_trans(skb, soft_iface);
 
 	/* should not be necessary anymore as we use skb_pull_rcsum()
@@ -971,12 +975,21 @@ void batadv_softif_destroy_sysfs(struct net_device *soft_iface)
 static void batadv_softif_destroy_netlink(struct net_device *soft_iface,
 					  struct list_head *head)
 {
+	struct batadv_priv *bat_priv = netdev_priv(soft_iface);
 	struct batadv_hard_iface *hard_iface;
+	struct batadv_softif_vlan *vlan;
 
 	list_for_each_entry(hard_iface, &batadv_hardif_list, list) {
 		if (hard_iface->soft_iface == soft_iface)
 			batadv_hardif_disable_interface(hard_iface,
 							BATADV_IF_CLEANUP_KEEP);
+	}
+
+	/* destroy the "untagged" VLAN */
+	vlan = batadv_softif_vlan_get(bat_priv, BATADV_NO_FLAGS);
+	if (vlan) {
+		batadv_softif_destroy_vlan(bat_priv, vlan);
+		batadv_softif_vlan_free_ref(vlan);
 	}
 
 	batadv_sysfs_del_meshif(soft_iface);

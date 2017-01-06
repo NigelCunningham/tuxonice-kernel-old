@@ -372,6 +372,7 @@ struct nested_vmx {
 	struct list_head vmcs02_pool;
 	int vmcs02_num;
 	u64 vmcs01_tsc_offset;
+	bool change_vmcs01_virtual_x2apic_mode;
 	/* L2 must run next, and mustn't decide to exit to L1. */
 	bool nested_run_pending;
 	/*
@@ -5777,22 +5778,27 @@ static void nested_free_vmcs02(struct vcpu_vmx *vmx, gpa_t vmptr)
 
 /*
  * Free all VMCSs saved for this vcpu, except the one pointed by
- * vmx->loaded_vmcs. These include the VMCSs in vmcs02_pool (except the one
- * currently used, if running L2), and vmcs01 when running L2.
+ * vmx->loaded_vmcs. We must be running L1, so vmx->loaded_vmcs
+ * must be &vmx->vmcs01.
  */
 static void nested_free_all_saved_vmcss(struct vcpu_vmx *vmx)
 {
 	struct vmcs02_list *item, *n;
+
+	WARN_ON(vmx->loaded_vmcs != &vmx->vmcs01);
 	list_for_each_entry_safe(item, n, &vmx->nested.vmcs02_pool, list) {
-		if (vmx->loaded_vmcs != &item->vmcs02)
-			free_loaded_vmcs(&item->vmcs02);
+		/*
+		 * Something will leak if the above WARN triggers.  Better than
+		 * a use-after-free.
+		 */
+		if (vmx->loaded_vmcs == &item->vmcs02)
+			continue;
+
+		free_loaded_vmcs(&item->vmcs02);
 		list_del(&item->list);
 		kfree(item);
+		vmx->nested.vmcs02_num--;
 	}
-	vmx->nested.vmcs02_num = 0;
-
-	if (vmx->loaded_vmcs != &vmx->vmcs01)
-		free_loaded_vmcs(&vmx->vmcs01);
 }
 
 /*
@@ -7079,6 +7085,12 @@ static void vmx_set_virtual_x2apic_mode(struct kvm_vcpu *vcpu, bool set)
 {
 	u32 sec_exec_control;
 
+	/* Postpone execution until vmcs01 is the current VMCS. */
+	if (is_guest_mode(vcpu)) {
+		to_vmx(vcpu)->nested.change_vmcs01_virtual_x2apic_mode = true;
+		return;
+	}
+
 	/*
 	 * There is not point to enable virtualize x2apic without enable
 	 * apicv
@@ -7557,13 +7569,46 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vmx_complete_interrupts(vmx);
 }
 
+static void vmx_load_vmcs01(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
+	int cpu;
+
+	if (vmx->loaded_vmcs == &vmx->vmcs01)
+		return;
+
+	cpu = get_cpu();
+	vmx->loaded_vmcs = &vmx->vmcs01;
+	vmx_vcpu_put(vcpu);
+	vmx_vcpu_load(vcpu, cpu);
+	vcpu->cpu = cpu;
+	put_cpu();
+}
+
+/*
+ * Ensure that the current vmcs of the logical processor is the
+ * vmcs01 of the vcpu before calling free_nested().
+ */
+static void vmx_free_vcpu_nested(struct kvm_vcpu *vcpu)
+{
+       struct vcpu_vmx *vmx = to_vmx(vcpu);
+       int r;
+
+       r = vcpu_load(vcpu);
+       BUG_ON(r);
+       vmx_load_vmcs01(vcpu);
+       free_nested(vmx);
+       vcpu_put(vcpu);
+}
+
 static void vmx_free_vcpu(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 
 	free_vpid(vmx);
+	leave_guest_mode(vcpu);
+	vmx_free_vcpu_nested(vcpu);
 	free_loaded_vmcs(vmx->loaded_vmcs);
-	free_nested(vmx);
 	kfree(vmx->guest_msrs);
 	kvm_vcpu_uninit(vcpu);
 	kmem_cache_free(kvm_vcpu_cache, vmx);
@@ -8707,7 +8752,6 @@ static void nested_vmx_vmexit(struct kvm_vcpu *vcpu, u32 exit_reason,
 			      unsigned long exit_qualification)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
-	int cpu;
 	struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
 
 	/* trying to cancel vmlaunch/vmresume is a bug */
@@ -8732,12 +8776,7 @@ static void nested_vmx_vmexit(struct kvm_vcpu *vcpu, u32 exit_reason,
 				       vmcs12->vm_exit_intr_error_code,
 				       KVM_ISA_VMX);
 
-	cpu = get_cpu();
-	vmx->loaded_vmcs = &vmx->vmcs01;
-	vmx_vcpu_put(vcpu);
-	vmx_vcpu_load(vcpu, cpu);
-	vcpu->cpu = cpu;
-	put_cpu();
+	vmx_load_vmcs01(vcpu);
 
 	vm_entry_controls_init(vmx, vmcs_read32(VM_ENTRY_CONTROLS));
 	vm_exit_controls_init(vmx, vmcs_read32(VM_EXIT_CONTROLS));
@@ -8751,6 +8790,12 @@ static void nested_vmx_vmexit(struct kvm_vcpu *vcpu, u32 exit_reason,
 
 	/* Update TSC_OFFSET if TSC was changed while L2 ran */
 	vmcs_write64(TSC_OFFSET, vmx->nested.vmcs01_tsc_offset);
+
+	if (vmx->nested.change_vmcs01_virtual_x2apic_mode) {
+		vmx->nested.change_vmcs01_virtual_x2apic_mode = false;
+		vmx_set_virtual_x2apic_mode(vcpu,
+				vcpu->arch.apic_base & X2APIC_ENABLE);
+	}
 
 	/* This is needed for same reason as it was needed in prepare_vmcs02 */
 	vmx->host_rsp = 0;

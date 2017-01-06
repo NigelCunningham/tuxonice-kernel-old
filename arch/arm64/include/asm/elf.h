@@ -137,6 +137,7 @@ extern unsigned long randomize_et_dyn(unsigned long base);
 
 #define SET_PERSONALITY(ex)		clear_thread_flag(TIF_32BIT);
 
+/* update AT_VECTOR_SIZE_ARCH if the number of NEW_AUX_ENT entries changes */
 #define ARCH_DLINFO							\
 do {									\
 	NEW_AUX_ENT(AT_SYSINFO_EHDR,					\
@@ -161,13 +162,13 @@ struct mm_struct;
 extern unsigned long arch_randomize_brk(struct mm_struct *mm);
 #define arch_randomize_brk arch_randomize_brk
 
-#ifdef CONFIG_COMPAT
-
 #ifdef __AARCH64EB__
 #define COMPAT_ELF_PLATFORM		("v8b")
 #else
 #define COMPAT_ELF_PLATFORM		("v8l")
 #endif
+
+#ifdef CONFIG_COMPAT
 
 #define COMPAT_ELF_ET_DYN_BASE		(randomize_et_dyn(2 * TASK_SIZE_32 / 3))
 

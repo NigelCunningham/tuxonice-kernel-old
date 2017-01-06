@@ -1,6 +1,6 @@
 VERSION = 3
 PATCHLEVEL = 16
-SUBLEVEL = 35
+SUBLEVEL = 39
 EXTRAVERSION =
 NAME = Museum of Fishiegoodies
 
@@ -381,7 +381,7 @@ AFLAGS_MODULE   =
 LDFLAGS_MODULE  =
 CFLAGS_KERNEL	=
 AFLAGS_KERNEL	=
-CFLAGS_GCOV	= -fprofile-arcs -ftest-coverage
+CFLAGS_GCOV	= -fprofile-arcs -ftest-coverage -fno-tree-loop-im
 
 
 # Use USERINCLUDE when you must reference the UAPI directories only.
@@ -671,9 +671,10 @@ KBUILD_CFLAGS += $(call cc-disable-warning, tautological-compare)
 KBUILD_CFLAGS += $(call cc-option, -mno-global-merge,)
 else
 
-# This warning generated too much noise in a regular build.
-# Use make W=1 to enable this warning (see scripts/Makefile.build)
+# These warnings generated too much noise in a regular build.
+# Use make W=1 to enable them (see scripts/Makefile.build)
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
+KBUILD_CFLAGS += $(call cc-disable-warning, unused-const-variable)
 endif
 
 ifdef CONFIG_FRAME_POINTER

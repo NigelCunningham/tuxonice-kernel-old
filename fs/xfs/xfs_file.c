@@ -786,7 +786,7 @@ xfs_file_fallocate(
 		     FALLOC_FL_COLLAPSE_RANGE | FALLOC_FL_ZERO_RANGE))
 		return -EOPNOTSUPP;
 
-	xfs_ilock(ip, XFS_IOLOCK_EXCL);
+	xfs_ilock(ip, XFS_IOLOCK_EXCL | XFS_MMAPLOCK_EXCL);
 	if (mode & FALLOC_FL_PUNCH_HOLE) {
 		error = xfs_free_file_space(ip, offset, len);
 		if (error)
@@ -862,11 +862,11 @@ xfs_file_fallocate(
 
 		iattr.ia_valid = ATTR_SIZE;
 		iattr.ia_size = new_size;
-		error = xfs_setattr_size(ip, &iattr);
+		error = xfs_setattr_size(file->f_dentry, &iattr);
 	}
 
 out_unlock:
-	xfs_iunlock(ip, XFS_IOLOCK_EXCL);
+	xfs_iunlock(ip, XFS_IOLOCK_EXCL | XFS_MMAPLOCK_EXCL);
 	return -error;
 }
 
@@ -954,20 +954,6 @@ xfs_file_mmap(
 
 	file_accessed(filp);
 	return 0;
-}
-
-/*
- * mmap()d file has taken write protection fault and is being made
- * writable. We can set the page state up correctly for a writable
- * page, which means we can do correct delalloc accounting (ENOSPC
- * checking!) and unwritten extent mapping.
- */
-STATIC int
-xfs_vm_page_mkwrite(
-	struct vm_area_struct	*vma,
-	struct vm_fault		*vmf)
-{
-	return block_page_mkwrite(vma, vmf, xfs_get_blocks);
 }
 
 /*
@@ -1417,6 +1403,60 @@ xfs_file_llseek(
 	}
 }
 
+/*
+ * Locking for serialisation of IO during page faults. This results in a lock
+ * ordering of:
+ *
+ * mmap_sem (MM)
+ *   i_mmap_lock (XFS - truncate serialisation)
+ *     page_lock (MM)
+ *       i_lock (XFS - extent map serialisation)
+ */
+STATIC int
+xfs_filemap_fault(
+	struct vm_area_struct	*vma,
+	struct vm_fault		*vmf)
+{
+	struct xfs_inode	*ip = XFS_I(vma->vm_file->f_mapping->host);
+	int			error;
+
+	trace_xfs_filemap_fault(ip);
+
+	xfs_ilock(ip, XFS_MMAPLOCK_SHARED);
+	error = filemap_fault(vma, vmf);
+	xfs_iunlock(ip, XFS_MMAPLOCK_SHARED);
+
+	return error;
+}
+
+/*
+ * mmap()d file has taken write protection fault and is being made writable. We
+ * can set the page state up correctly for a writable page, which means we can
+ * do correct delalloc accounting (ENOSPC checking!) and unwritten extent
+ * mapping.
+ */
+STATIC int
+xfs_filemap_page_mkwrite(
+	struct vm_area_struct	*vma,
+	struct vm_fault		*vmf)
+{
+	struct xfs_inode	*ip = XFS_I(vma->vm_file->f_mapping->host);
+	int			ret;
+
+	trace_xfs_filemap_page_mkwrite(ip);
+
+	sb_start_pagefault(VFS_I(ip)->i_sb);
+	file_update_time(vma->vm_file);
+	xfs_ilock(ip, XFS_MMAPLOCK_SHARED);
+
+	ret = __block_page_mkwrite(vma, vmf, xfs_get_blocks);
+
+	xfs_iunlock(ip, XFS_MMAPLOCK_SHARED);
+	sb_end_pagefault(VFS_I(ip)->i_sb);
+
+	return block_page_mkwrite_return(ret);
+}
+
 const struct file_operations xfs_file_operations = {
 	.llseek		= xfs_file_llseek,
 	.read		= new_sync_read,
@@ -1449,8 +1489,8 @@ const struct file_operations xfs_dir_file_operations = {
 };
 
 static const struct vm_operations_struct xfs_file_vm_ops = {
-	.fault		= filemap_fault,
+	.fault		= xfs_filemap_fault,
 	.map_pages	= filemap_map_pages,
-	.page_mkwrite	= xfs_vm_page_mkwrite,
+	.page_mkwrite	= xfs_filemap_page_mkwrite,
 	.remap_pages	= generic_file_remap_pages,
 };

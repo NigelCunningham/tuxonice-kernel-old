@@ -881,7 +881,6 @@ static int ip6gre_xmit_other(struct sk_buff *skb, struct net_device *dev)
 		encap_limit = t->parms.encap_limit;
 
 	memcpy(&fl6, &t->fl.u.ip6, sizeof(fl6));
-	fl6.flowi6_proto = skb->protocol;
 
 	err = ip6gre_xmit2(skb, dev, 0, &fl6, encap_limit, &mtu);
 
@@ -939,6 +938,7 @@ static void ip6gre_tnl_link_config(struct ip6_tnl *t, int set_mtu)
 	fl6->daddr = p->raddr;
 	fl6->flowi6_oif = p->link;
 	fl6->flowlabel = 0;
+	fl6->flowi6_proto = IPPROTO_GRE;
 
 	if (!(p->flags&IP6_TNL_F_USE_ORIG_TCLASS))
 		fl6->flowlabel |= IPV6_TCLASS_MASK & p->flowinfo;
