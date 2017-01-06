@@ -4975,7 +4975,7 @@ static int btrfs_setattr(struct dentry *dentry, struct iattr *attr)
 	if (btrfs_root_readonly(root))
 		return -EROFS;
 
-	err = inode_change_ok(inode, attr);
+	err = setattr_prepare(dentry, attr);
 	if (err)
 		return err;
 
@@ -9894,7 +9894,7 @@ static const struct file_operations btrfs_dir_file_operations = {
 	.iterate	= btrfs_real_readdir,
 	.unlocked_ioctl	= btrfs_ioctl,
 #ifdef CONFIG_COMPAT
-	.compat_ioctl	= btrfs_ioctl,
+	.compat_ioctl	= btrfs_compat_ioctl,
 #endif
 	.release        = btrfs_release_file,
 	.fsync		= btrfs_sync_file,

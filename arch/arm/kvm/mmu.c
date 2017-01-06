@@ -886,11 +886,14 @@ static int stage2_set_pmd_huge(struct kvm *kvm, struct kvm_mmu_memory_cache
 	VM_BUG_ON(pmd_present(*pmd) && pmd_pfn(*pmd) != pmd_pfn(*new_pmd));
 
 	old_pmd = *pmd;
-	kvm_set_pmd(pmd, *new_pmd);
-	if (pmd_present(old_pmd))
+	if (pmd_present(old_pmd)) {
+		pmd_clear(pmd);
 		kvm_tlb_flush_vmid_ipa(kvm, addr);
-	else
+	} else {
 		get_page(virt_to_page(pmd));
+	}
+
+	kvm_set_pmd(pmd, *new_pmd);
 	return 0;
 }
 
@@ -939,12 +942,14 @@ static int stage2_set_pte(struct kvm *kvm, struct kvm_mmu_memory_cache *cache,
 
 	/* Create 2nd stage page table mapping - Level 3 */
 	old_pte = *pte;
-	kvm_set_pte(pte, *new_pte);
-	if (pte_present(old_pte))
+	if (pte_present(old_pte)) {
+		kvm_set_pte(pte, __pte(0));
 		kvm_tlb_flush_vmid_ipa(kvm, addr);
-	else
+	} else {
 		get_page(virt_to_page(pte));
+	}
 
+	kvm_set_pte(pte, *new_pte);
 	return 0;
 }
 
@@ -1430,6 +1435,22 @@ int kvm_handle_guest_abort(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		}
 
 		/*
+		 * Check for a cache maintenance operation. Since we
+		 * ended-up here, we know it is outside of any memory
+		 * slot. But we can't find out if that is for a device,
+		 * or if the guest is just being stupid. The only thing
+		 * we know for sure is that this range cannot be cached.
+		 *
+		 * So let's assume that the guest is just being
+		 * cautious, and skip the instruction.
+		 */
+		if (kvm_vcpu_dabt_is_cm(vcpu)) {
+			kvm_skip_instr(vcpu, kvm_vcpu_trap_il_is32bit(vcpu));
+			ret = 1;
+			goto out_unlock;
+		}
+
+		/*
 		 * The IPA is reported as [MAX:12], so we need to
 		 * complement it with the bottom 12 bits from the
 		 * faulting VA. This is always 12 bits, irrespective
@@ -1845,6 +1866,7 @@ void kvm_arch_memslots_updated(struct kvm *kvm)
 
 void kvm_arch_flush_shadow_all(struct kvm *kvm)
 {
+	kvm_free_stage2_pgd(kvm);
 }
 
 void kvm_arch_flush_shadow_memslot(struct kvm *kvm,
