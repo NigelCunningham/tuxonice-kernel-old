@@ -2025,11 +2025,10 @@ static void nfs4_close_prepare(struct rpc_task *task, void *data)
 			call_close |= is_wronly;
 		else if (is_wronly)
 			calldata->arg.fmode |= FMODE_WRITE;
+		if (calldata->arg.fmode != (FMODE_READ|FMODE_WRITE))
+			call_close |= is_rdwr;
 	} else if (is_rdwr)
 		calldata->arg.fmode |= FMODE_READ|FMODE_WRITE;
-
-	if (calldata->arg.fmode == 0)
-		call_close |= is_rdwr;
 
 	spin_unlock(&state->owner->so_lock);
 
@@ -5361,14 +5360,21 @@ static int _nfs4_proc_create_session(struct nfs_client *clp)
 
 	status = rpc_call_sync(session->clp->cl_rpcclient, &msg, RPC_TASK_TIMEOUT);
 
+	switch (status) {
+	case -NFS4ERR_STALE_CLIENTID:
+	case -NFS4ERR_DELAY:
+	case -ETIMEDOUT:
+	case -EACCES:
+	case -EAGAIN:
+		goto out;
+	};
+
+	clp->cl_seqid++;
 	if (!status)
 		/* Verify the session's negotiated channel_attrs values */
 		status = nfs4_verify_channel_attrs(&args, session);
-	if (!status) {
-		/* Increment the clientid slot sequence id */
-		clp->cl_seqid++;
-	}
 
+out:
 	return status;
 }
 

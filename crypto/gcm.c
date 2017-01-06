@@ -711,7 +711,9 @@ static struct crypto_instance *crypto_gcm_alloc_common(struct rtattr **tb,
 
 	ghash_alg = crypto_find_alg(ghash_name, &crypto_ahash_type,
 				    CRYPTO_ALG_TYPE_HASH,
-				    CRYPTO_ALG_TYPE_AHASH_MASK);
+				    CRYPTO_ALG_TYPE_AHASH_MASK |
+				    crypto_requires_sync(algt->type,
+							 algt->mask));
 	err = PTR_ERR(ghash_alg);
 	if (IS_ERR(ghash_alg))
 		return ERR_PTR(err);
@@ -1103,6 +1105,21 @@ static int crypto_rfc4543_setauthsize(struct crypto_aead *parent,
 	return crypto_aead_setauthsize(ctx->child, authsize);
 }
 
+static void crypto_rfc4543_done(struct crypto_async_request *areq, int err)
+{
+	struct aead_request *req = areq->data;
+	struct crypto_aead *aead = crypto_aead_reqtfm(req);
+	struct crypto_rfc4543_req_ctx *rctx = crypto_rfc4543_reqctx(req);
+
+	if (!err) {
+		scatterwalk_map_and_copy(rctx->auth_tag, req->dst,
+					 req->cryptlen,
+					 crypto_aead_authsize(aead), 1);
+	}
+
+	aead_request_complete(req, err);
+}
+
 static struct aead_request *crypto_rfc4543_crypt(struct aead_request *req,
 						 int enc)
 {
@@ -1159,8 +1176,11 @@ static struct aead_request *crypto_rfc4543_crypt(struct aead_request *req,
 	scatterwalk_crypto_chain(assoc, payload, 0, 2);
 
 	aead_request_set_tfm(subreq, ctx->child);
-	aead_request_set_callback(subreq, req->base.flags, req->base.complete,
-				  req->base.data);
+	aead_request_set_callback(subreq, req->base.flags, crypto_rfc4543_done,
+				  req);
+	if (!enc)
+		aead_request_set_callback(subreq, req->base.flags,
+					  req->base.complete, req->base.data);
 	aead_request_set_crypt(subreq, cipher, cipher, enc ? 0 : authsize, iv);
 	aead_request_set_assoc(subreq, assoc, assoclen);
 

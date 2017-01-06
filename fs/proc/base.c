@@ -558,7 +558,7 @@ int proc_setattr(struct dentry *dentry, struct iattr *attr)
 	if (attr->ia_valid & ATTR_MODE)
 		return -EPERM;
 
-	error = inode_change_ok(inode, attr);
+	error = setattr_prepare(dentry, attr);
 	if (error)
 		return error;
 
@@ -905,7 +905,8 @@ static ssize_t environ_read(struct file *file, char __user *buf,
 
 	mm = mm_for_maps(task);
 	ret = PTR_ERR(mm);
-	if (!mm || IS_ERR(mm))
+	/* Ensure the process spawned far enough to have an environment. */
+	if (!mm || IS_ERR(mm) || !mm->env_end)
 		goto out_free;
 
 	ret = 0;

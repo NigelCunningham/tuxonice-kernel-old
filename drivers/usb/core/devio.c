@@ -1005,10 +1005,11 @@ static int proc_getdriver(struct dev_state *ps, void __user *arg)
 
 static int proc_connectinfo(struct dev_state *ps, void __user *arg)
 {
-	struct usbdevfs_connectinfo ci = {
-		.devnum = ps->dev->devnum,
-		.slow = ps->dev->speed == USB_SPEED_LOW
-	};
+	struct usbdevfs_connectinfo ci;
+
+	memset(&ci, 0, sizeof(ci));
+	ci.devnum = ps->dev->devnum;
+	ci.slow = ps->dev->speed == USB_SPEED_LOW;
 
 	if (copy_to_user(arg, &ci, sizeof(ci)))
 		return -EFAULT;
@@ -1280,11 +1281,17 @@ static int proc_do_submiturb(struct dev_state *ps, struct usbdevfs_urb *uurb,
 	as->urb->setup_packet = (unsigned char *)dr;
 	as->urb->start_frame = uurb->start_frame;
 	as->urb->number_of_packets = uurb->number_of_packets;
-	if (uurb->type == USBDEVFS_URB_TYPE_ISO ||
-			ps->dev->speed == USB_SPEED_HIGH)
-		as->urb->interval = 1 << min(15, ep->desc.bInterval - 1);
-	else
-		as->urb->interval = ep->desc.bInterval;
+
+	if (ep->desc.bInterval) {
+		if (uurb->type == USBDEVFS_URB_TYPE_ISO ||
+				ps->dev->speed == USB_SPEED_HIGH ||
+				ps->dev->speed >= USB_SPEED_SUPER)
+			as->urb->interval = 1 <<
+					min(15, ep->desc.bInterval - 1);
+		else
+			as->urb->interval = ep->desc.bInterval;
+	}
+
 	as->urb->context = as;
 	as->urb->complete = async_completed;
 	for (totlen = u = 0; u < uurb->number_of_packets; u++) {

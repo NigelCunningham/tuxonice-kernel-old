@@ -422,7 +422,7 @@ static int hugetlbfs_setattr(struct dentry *dentry, struct iattr *attr)
 
 	BUG_ON(!inode);
 
-	error = inode_change_ok(inode, attr);
+	error = setattr_prepare(dentry, attr);
 	if (error)
 		return error;
 
@@ -978,6 +978,11 @@ static int __init init_hugetlbfs_fs(void)
 {
 	int error;
 	struct vfsmount *vfsmount;
+
+	if (!hugepages_supported()) {
+		pr_info("hugetlbfs: disabling because there are no supported hugepage sizes\n");
+		return -ENOTSUPP;
+	}
 
 	error = bdi_init(&hugetlbfs_backing_dev_info);
 	if (error)

@@ -1302,6 +1302,9 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 	int namelen;
 	int ret = 0;
 
+	if (!S_ISDIR(file->f_dentry->d_inode->i_mode))
+		return -ENOTDIR;
+
 	if (root->fs_info->sb->s_flags & MS_RDONLY)
 		return -EROFS;
 
@@ -1350,6 +1353,9 @@ static noinline int btrfs_ioctl_snap_create(struct file *file,
 	struct btrfs_ioctl_vol_args *vol_args;
 	int ret;
 
+	if (!S_ISDIR(file->f_dentry->d_inode->i_mode))
+		return -ENOTDIR;
+
 	vol_args = memdup_user(arg, sizeof(*vol_args));
 	if (IS_ERR(vol_args))
 		return PTR_ERR(vol_args);
@@ -1371,6 +1377,9 @@ static noinline int btrfs_ioctl_snap_create_v2(struct file *file,
 	u64 transid = 0;
 	u64 *ptr = NULL;
 	bool readonly = false;
+
+	if (!S_ISDIR(file->f_dentry->d_inode->i_mode))
+		return -ENOTDIR;
 
 	vol_args = memdup_user(arg, sizeof(*vol_args));
 	if (IS_ERR(vol_args))
@@ -1847,6 +1856,9 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 	int namelen;
 	int ret;
 	int err = 0;
+
+	if (!S_ISDIR(dir->i_mode))
+		return -ENOTDIR;
 
 	vol_args = memdup_user(arg, sizeof(*vol_args));
 	if (IS_ERR(vol_args))
@@ -3260,3 +3272,24 @@ long btrfs_ioctl(struct file *file, unsigned int
 
 	return -ENOTTY;
 }
+
+#ifdef CONFIG_COMPAT
+long btrfs_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	switch (cmd) {
+	case FS_IOC32_GETFLAGS:
+		cmd = FS_IOC_GETFLAGS;
+		break;
+	case FS_IOC32_SETFLAGS:
+		cmd = FS_IOC_SETFLAGS;
+		break;
+	case FS_IOC32_GETVERSION:
+		cmd = FS_IOC_GETVERSION;
+		break;
+	default:
+		return -ENOIOCTLCMD;
+	}
+
+	return btrfs_ioctl(file, cmd, (unsigned long) compat_ptr(arg));
+}
+#endif
