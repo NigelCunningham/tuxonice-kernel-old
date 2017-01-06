@@ -2879,14 +2879,15 @@ static int edge_startup(struct usb_serial *serial)
 						usb_alloc_urb(0, GFP_KERNEL);
 				if (!edge_serial->interrupt_read_urb) {
 					dev_err(ddev, "out of memory\n");
-					return -ENOMEM;
+					response = -ENOMEM;
+					break;
 				}
 				edge_serial->interrupt_in_buffer =
 					kmalloc(buffer_size, GFP_KERNEL);
 				if (!edge_serial->interrupt_in_buffer) {
 					dev_err(ddev, "out of memory\n");
-					usb_free_urb(edge_serial->interrupt_read_urb);
-					return -ENOMEM;
+					response = -ENOMEM;
+					break;
 				}
 				edge_serial->interrupt_in_endpoint =
 						endpoint->bEndpointAddress;
@@ -2916,14 +2917,15 @@ static int edge_startup(struct usb_serial *serial)
 						usb_alloc_urb(0, GFP_KERNEL);
 				if (!edge_serial->read_urb) {
 					dev_err(ddev, "out of memory\n");
-					return -ENOMEM;
+					response = -ENOMEM;
+					break;
 				}
 				edge_serial->bulk_in_buffer =
 					kmalloc(buffer_size, GFP_KERNEL);
 				if (!edge_serial->bulk_in_buffer) {
 					dev_err(&dev->dev, "out of memory\n");
-					usb_free_urb(edge_serial->read_urb);
-					return -ENOMEM;
+					response = -ENOMEM;
+					break;
 				}
 				edge_serial->bulk_in_endpoint =
 						endpoint->bEndpointAddress;
@@ -2949,9 +2951,22 @@ static int edge_startup(struct usb_serial *serial)
 			}
 		}
 
-		if (!interrupt_in_found || !bulk_in_found || !bulk_out_found) {
-			dev_err(ddev, "Error - the proper endpoints were not found!\n");
-			return -ENODEV;
+		if (response || !interrupt_in_found || !bulk_in_found ||
+							!bulk_out_found) {
+			if (!response) {
+				dev_err(ddev, "expected endpoints not found\n");
+				response = -ENODEV;
+			}
+
+			usb_free_urb(edge_serial->interrupt_read_urb);
+			kfree(edge_serial->interrupt_in_buffer);
+
+			usb_free_urb(edge_serial->read_urb);
+			kfree(edge_serial->bulk_in_buffer);
+
+			kfree(edge_serial);
+
+			return response;
 		}
 
 		/* start interrupt read for this edgeport this interrupt will
@@ -2974,16 +2989,9 @@ static void edge_disconnect(struct usb_serial *serial)
 {
 	struct edgeport_serial *edge_serial = usb_get_serial_data(serial);
 
-	/* stop reads and writes on all ports */
-	/* free up our endpoint stuff */
 	if (edge_serial->is_epic) {
 		usb_kill_urb(edge_serial->interrupt_read_urb);
-		usb_free_urb(edge_serial->interrupt_read_urb);
-		kfree(edge_serial->interrupt_in_buffer);
-
 		usb_kill_urb(edge_serial->read_urb);
-		usb_free_urb(edge_serial->read_urb);
-		kfree(edge_serial->bulk_in_buffer);
 	}
 }
 
@@ -2995,6 +3003,16 @@ static void edge_disconnect(struct usb_serial *serial)
 static void edge_release(struct usb_serial *serial)
 {
 	struct edgeport_serial *edge_serial = usb_get_serial_data(serial);
+
+	if (edge_serial->is_epic) {
+		usb_kill_urb(edge_serial->interrupt_read_urb);
+		usb_free_urb(edge_serial->interrupt_read_urb);
+		kfree(edge_serial->interrupt_in_buffer);
+
+		usb_kill_urb(edge_serial->read_urb);
+		usb_free_urb(edge_serial->read_urb);
+		kfree(edge_serial->bulk_in_buffer);
+	}
 
 	kfree(edge_serial);
 }
