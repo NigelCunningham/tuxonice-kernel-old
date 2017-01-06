@@ -241,8 +241,20 @@ int dmar_insert_dev_scope(struct dmar_pci_notify_info *info,
 		if (!dmar_match_pci_path(info, scope->bus, path, level))
 			continue;
 
-		if ((scope->entry_type == ACPI_DMAR_SCOPE_TYPE_ENDPOINT) ^
-		    (info->dev->hdr_type == PCI_HEADER_TYPE_NORMAL)) {
+		/*
+		 * We expect devices with endpoint scope to have normal PCI
+		 * headers, and devices with bridge scope to have bridge PCI
+		 * headers.  However PCI NTB devices may be listed in the
+		 * DMAR table with bridge scope, even though they have a
+		 * normal PCI header.  NTB devices are identified by class
+		 * "BRIDGE_OTHER" (0680h) - we don't declare a socpe mismatch
+		 * for this special case.
+		 */
+		if ((scope->entry_type == ACPI_DMAR_SCOPE_TYPE_ENDPOINT &&
+		     info->dev->hdr_type != PCI_HEADER_TYPE_NORMAL) ||
+		    (scope->entry_type == ACPI_DMAR_SCOPE_TYPE_BRIDGE &&
+		     (info->dev->hdr_type == PCI_HEADER_TYPE_NORMAL &&
+		      info->dev->class >> 8 != PCI_CLASS_BRIDGE_OTHER))) {
 			pr_warn("Device scope type does not match for %s\n",
 				pci_name(info->dev));
 			return -EINVAL;
@@ -326,7 +338,9 @@ static int dmar_pci_bus_notifier(struct notifier_block *nb,
 	struct pci_dev *pdev = to_pci_dev(data);
 	struct dmar_pci_notify_info *info;
 
-	/* Only care about add/remove events for physical functions */
+	/* Only care about add/remove events for physical functions.
+	 * For VFs we actually do the lookup based on the corresponding
+	 * PF in device_to_iommu() anyway. */
 	if (pdev->is_virtfn)
 		return NOTIFY_DONE;
 	if (action != BUS_NOTIFY_ADD_DEVICE &&
@@ -1155,8 +1169,6 @@ static int qi_check_fault(struct intel_iommu *iommu, int index)
 				(unsigned long long)qi->desc[index].high);
 			memcpy(&qi->desc[index], &qi->desc[wait_index],
 					sizeof(struct qi_desc));
-			__iommu_flush_cache(iommu, &qi->desc[index],
-					sizeof(struct qi_desc));
 			writel(DMA_FSTS_IQE, iommu->reg + DMAR_FSTS_REG);
 			return -EINVAL;
 		}
@@ -1230,9 +1242,6 @@ restart:
 	wait_desc.high = virt_to_phys(&qi->desc_status[wait_index]);
 
 	hw[wait_index] = wait_desc;
-
-	__iommu_flush_cache(iommu, &hw[index], sizeof(struct qi_desc));
-	__iommu_flush_cache(iommu, &hw[wait_index], sizeof(struct qi_desc));
 
 	qi->free_head = (qi->free_head + 2) % QI_LENGTH;
 	qi->free_cnt -= 2;

@@ -191,7 +191,6 @@ struct raid_dev {
 #define RT_FLAG_RS_BITMAP_LOADED	2
 #define RT_FLAG_UPDATE_SBS		3
 #define RT_FLAG_RESHAPE_RS		4
-#define RT_FLAG_KEEP_RS_FROZEN		5
 
 /* Array elements of 64 bit needed for rebuild/failed disk bits */
 #define DISKS_ARRAY_ELEMS ((MAX_RAID_DEVICES + (sizeof(uint64_t) * 8 - 1)) / sizeof(uint64_t) / 8)
@@ -267,7 +266,7 @@ static struct raid_type {
 	{"raid10_offset", "raid10 offset (striped mirrors)",	    0, 2, 10, ALGORITHM_RAID10_OFFSET},
 	{"raid10_near",	  "raid10 near (striped mirrors)",	    0, 2, 10, ALGORITHM_RAID10_NEAR},
 	{"raid10",	  "raid10 (striped mirrors)",		    0, 2, 10, ALGORITHM_RAID10_DEFAULT},
-	{"raid4",	  "raid4 (dedicated last parity disk)",	    1, 2, 4,  ALGORITHM_PARITY_N}, /* raid4 layout = raid5_n */
+	{"raid4",	  "raid4 (dedicated first parity disk)",    1, 2, 5,  ALGORITHM_PARITY_0}, /* raid4 layout = raid5_0 */
 	{"raid5_n",	  "raid5 (dedicated last parity disk)",	    1, 2, 5,  ALGORITHM_PARITY_N},
 	{"raid5_ls",	  "raid5 (left symmetric)",		    1, 2, 5,  ALGORITHM_LEFT_SYMMETRIC},
 	{"raid5_rs",	  "raid5 (right symmetric)",		    1, 2, 5,  ALGORITHM_RIGHT_SYMMETRIC},
@@ -861,6 +860,9 @@ static int validate_region_size(struct raid_set *rs, unsigned long region_size)
 {
 	unsigned long min_region_size = rs->ti->len / (1 << 21);
 
+	if (rs_is_raid0(rs))
+		return 0;
+
 	if (!region_size) {
 		/*
 		 * Choose a reasonable default.	 All figures in sectors.
@@ -930,6 +932,8 @@ static int validate_raid_redundancy(struct raid_set *rs)
 			rebuild_cnt++;
 
 	switch (rs->raid_type->level) {
+	case 0:
+		break;
 	case 1:
 		if (rebuild_cnt >= rs->md.raid_disks)
 			goto too_many;
@@ -1270,7 +1274,7 @@ static int parse_raid_params(struct raid_set *rs, struct dm_arg_set *as,
 			}
 			rs->md.sync_speed_min = (int)value;
 		} else if (!strcasecmp(key, dm_raid_arg_name_by_flag(CTR_FLAG_MAX_RECOVERY_RATE))) {
-			if (test_and_set_bit(__CTR_FLAG_MIN_RECOVERY_RATE, &rs->ctr_flags)) {
+			if (test_and_set_bit(__CTR_FLAG_MAX_RECOVERY_RATE, &rs->ctr_flags)) {
 				rs->ti->error = "Only one max_recovery_rate argument pair allowed";
 				return -EINVAL;
 			}
@@ -1960,6 +1964,7 @@ static void super_sync(struct mddev *mddev, struct md_rdev *rdev)
 	sb->data_offset = cpu_to_le64(rdev->data_offset);
 	sb->new_data_offset = cpu_to_le64(rdev->new_data_offset);
 	sb->sectors = cpu_to_le64(rdev->sectors);
+	sb->incompat_features = cpu_to_le32(0);
 
 	/* Zero out the rest of the payload after the size of the superblock */
 	memset(sb + 1, 0, rdev->sb_size - sizeof(*sb));
@@ -2082,11 +2087,11 @@ static int super_init_validation(struct raid_set *rs, struct md_rdev *rdev)
 		/*
 		 * No takeover/reshaping, because we don't have the extended v1.9.0 metadata
 		 */
-		if (le32_to_cpu(sb->level) != mddev->level) {
+		if (le32_to_cpu(sb->level) != mddev->new_level) {
 			DMERR("Reshaping/takeover raid sets not yet supported. (raid level/stripes/size change)");
 			return -EINVAL;
 		}
-		if (le32_to_cpu(sb->layout) != mddev->layout) {
+		if (le32_to_cpu(sb->layout) != mddev->new_layout) {
 			DMERR("Reshaping raid sets not yet supported. (raid layout change)");
 			DMERR("	 0x%X vs 0x%X", le32_to_cpu(sb->layout), mddev->layout);
 			DMERR("	 Old layout: %s w/ %d copies",
@@ -2097,7 +2102,7 @@ static int super_init_validation(struct raid_set *rs, struct md_rdev *rdev)
 			      raid10_md_layout_to_copies(mddev->layout));
 			return -EINVAL;
 		}
-		if (le32_to_cpu(sb->stripe_sectors) != mddev->chunk_sectors) {
+		if (le32_to_cpu(sb->stripe_sectors) != mddev->new_chunk_sectors) {
 			DMERR("Reshaping raid sets not yet supported. (stripe sectors change)");
 			return -EINVAL;
 		}
@@ -2109,6 +2114,8 @@ static int super_init_validation(struct raid_set *rs, struct md_rdev *rdev)
 			      sb->num_devices, mddev->raid_disks);
 			return -EINVAL;
 		}
+
+		DMINFO("Discovered old metadata format; upgrading to extended metadata format");
 
 		/* Table line is checked vs. authoritative superblock */
 		rs_set_new(rs);
@@ -2253,7 +2260,8 @@ static int super_validate(struct raid_set *rs, struct md_rdev *rdev)
 	if (!mddev->events && super_init_validation(rs, rdev))
 		return -EINVAL;
 
-	if (le32_to_cpu(sb->compat_features) != FEATURE_FLAG_SUPPORTS_V190) {
+	if (le32_to_cpu(sb->compat_features) &&
+	    le32_to_cpu(sb->compat_features) != FEATURE_FLAG_SUPPORTS_V190) {
 		rs->ti->error = "Unable to assemble array: Unknown flag(s) in compatible feature flags";
 		return -EINVAL;
 	}
@@ -2334,6 +2342,13 @@ static int analyse_superblocks(struct dm_target *ti, struct raid_set *rs)
 		case 0:
 			break;
 		default:
+			/*
+			 * We have to keep any raid0 data/metadata device pairs or
+			 * the MD raid0 personality will fail to start the array.
+			 */
+			if (rs_is_raid0(rs))
+				continue;
+
 			dev = container_of(rdev, struct raid_dev, rdev);
 			if (dev->meta_dev)
 				dm_put_device(ti, dev->meta_dev);
@@ -2578,7 +2593,6 @@ static int rs_prepare_reshape(struct raid_set *rs)
 		} else {
 			/* Process raid1 without delta_disks */
 			mddev->raid_disks = rs->raid_disks;
-			set_bit(RT_FLAG_KEEP_RS_FROZEN, &rs->runtime_flags);
 			reshape = false;
 		}
 	} else {
@@ -2589,7 +2603,6 @@ static int rs_prepare_reshape(struct raid_set *rs)
 	if (reshape) {
 		set_bit(RT_FLAG_RESHAPE_RS, &rs->runtime_flags);
 		set_bit(RT_FLAG_UPDATE_SBS, &rs->runtime_flags);
-		set_bit(RT_FLAG_KEEP_RS_FROZEN, &rs->runtime_flags);
 	} else if (mddev->raid_disks < rs->raid_disks)
 		/* Create new superblocks and bitmaps, if any new disks */
 		set_bit(RT_FLAG_UPDATE_SBS, &rs->runtime_flags);
@@ -2901,7 +2914,6 @@ static int raid_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			goto bad;
 
 		set_bit(RT_FLAG_UPDATE_SBS, &rs->runtime_flags);
-		set_bit(RT_FLAG_KEEP_RS_FROZEN, &rs->runtime_flags);
 		/* Takeover ain't recovery, so disable recovery */
 		rs_setup_recovery(rs, MaxSector);
 		rs_set_new(rs);
@@ -2981,6 +2993,9 @@ static int raid_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			}
 		}
 	}
+
+	/* Disable/enable discard support on raid set. */
+	configure_discard_support(rs);
 
 	mddev_unlock(&rs->md);
 	return 0;
@@ -3385,20 +3400,27 @@ static void raid_postsuspend(struct dm_target *ti)
 {
 	struct raid_set *rs = ti->private;
 
-	if (test_and_clear_bit(RT_FLAG_RS_RESUMED, &rs->runtime_flags)) {
-		if (!rs->md.suspended)
-			mddev_suspend(&rs->md);
-		rs->md.ro = 1;
-	}
+	if (!rs->md.suspended)
+		mddev_suspend(&rs->md);
+
+	rs->md.ro = 1;
 }
 
 static void attempt_restore_of_faulty_devices(struct raid_set *rs)
 {
 	int i;
-	uint64_t failed_devices, cleared_failed_devices = 0;
+	uint64_t cleared_failed_devices[DISKS_ARRAY_ELEMS];
 	unsigned long flags;
+	bool cleared = false;
 	struct dm_raid_superblock *sb;
+	struct mddev *mddev = &rs->md;
 	struct md_rdev *r;
+
+	/* RAID personalities have to provide hot add/remove methods or we need to bail out. */
+	if (!mddev->pers || !mddev->pers->hot_add_disk || !mddev->pers->hot_remove_disk)
+		return;
+
+	memset(cleared_failed_devices, 0, sizeof(cleared_failed_devices));
 
 	for (i = 0; i < rs->md.raid_disks; i++) {
 		r = &rs->dev[i].rdev;
@@ -3419,7 +3441,7 @@ static void attempt_restore_of_faulty_devices(struct raid_set *rs)
 			 * ourselves.
 			 */
 			if ((r->raid_disk >= 0) &&
-			    (r->mddev->pers->hot_remove_disk(r->mddev, r) != 0))
+			    (mddev->pers->hot_remove_disk(mddev, r) != 0))
 				/* Failed to revive this device, try next */
 				continue;
 
@@ -3429,22 +3451,30 @@ static void attempt_restore_of_faulty_devices(struct raid_set *rs)
 			clear_bit(Faulty, &r->flags);
 			clear_bit(WriteErrorSeen, &r->flags);
 			clear_bit(In_sync, &r->flags);
-			if (r->mddev->pers->hot_add_disk(r->mddev, r)) {
+			if (mddev->pers->hot_add_disk(mddev, r)) {
 				r->raid_disk = -1;
 				r->saved_raid_disk = -1;
 				r->flags = flags;
 			} else {
 				r->recovery_offset = 0;
-				cleared_failed_devices |= 1 << i;
+				set_bit(i, (void *) cleared_failed_devices);
+				cleared = true;
 			}
 		}
 	}
-	if (cleared_failed_devices) {
+
+	/* If any failed devices could be cleared, update all sbs failed_devices bits */
+	if (cleared) {
+		uint64_t failed_devices[DISKS_ARRAY_ELEMS];
+
 		rdev_for_each(r, &rs->md) {
 			sb = page_address(r->sb_page);
-			failed_devices = le64_to_cpu(sb->failed_devices);
-			failed_devices &= ~cleared_failed_devices;
-			sb->failed_devices = cpu_to_le64(failed_devices);
+			sb_retrieve_failed_devices(sb, failed_devices);
+
+			for (i = 0; i < DISKS_ARRAY_ELEMS; i++)
+				failed_devices[i] &= ~cleared_failed_devices[i];
+
+			sb_update_failed_devices(sb, failed_devices);
 		}
 	}
 }
@@ -3553,12 +3583,6 @@ static int raid_preresume(struct dm_target *ti)
 	if (test_bit(RT_FLAG_UPDATE_SBS, &rs->runtime_flags))
 		rs_update_sbs(rs);
 
-	/*
-	 * Disable/enable discard support on raid set after any
-	 * conversion, because devices can have been added
-	 */
-	configure_discard_support(rs);
-
 	/* Load the bitmap from disk unless raid0 */
 	r = __load_dirty_region_bitmap(rs);
 	if (r)
@@ -3577,7 +3601,6 @@ static int raid_preresume(struct dm_target *ti)
 	/* Be prepared for mddev_resume() in raid_resume() */
 	set_bit(MD_RECOVERY_FROZEN, &mddev->recovery);
 	if (mddev->recovery_cp && mddev->recovery_cp < MaxSector) {
-		set_bit(MD_RECOVERY_REQUESTED, &mddev->recovery);
 		set_bit(MD_RECOVERY_SYNC, &mddev->recovery);
 		mddev->resync_min = mddev->recovery_cp;
 	}
@@ -3610,31 +3633,20 @@ static void raid_resume(struct dm_target *ti)
 		 * devices are reachable again.
 		 */
 		attempt_restore_of_faulty_devices(rs);
-	} else {
-		mddev->ro = 0;
-		mddev->in_sync = 0;
-
-		/*
-		 * When passing in flags to the ctr, we expect userspace
-		 * to reset them because they made it to the superblocks
-		 * and reload the mapping anyway.
-		 *
-		 * -> only unfreeze recovery in case of a table reload or
-		 *    we'll have a bogus recovery/reshape position
-		 *    retrieved from the superblock by the ctr because
-		 *    the ongoing recovery/reshape will change it after read.
-		 */
-		if (!test_bit(RT_FLAG_KEEP_RS_FROZEN, &rs->runtime_flags))
-			clear_bit(MD_RECOVERY_FROZEN, &mddev->recovery);
-
-		if (mddev->suspended)
-			mddev_resume(mddev);
 	}
+
+	mddev->ro = 0;
+	mddev->in_sync = 0;
+
+	clear_bit(MD_RECOVERY_FROZEN, &mddev->recovery);
+
+	if (mddev->suspended)
+		mddev_resume(mddev);
 }
 
 static struct target_type raid_target = {
 	.name = "raid",
-	.version = {1, 9, 0},
+	.version = {1, 9, 1},
 	.module = THIS_MODULE,
 	.ctr = raid_ctr,
 	.dtr = raid_dtr,

@@ -455,14 +455,14 @@ void tipc_mon_rcv(struct net *net, void *data, u16 dlen, u32 addr,
 	int i, applied_bef;
 
 	state->probing = false;
-	if (!dlen)
-		return;
 
 	/* Sanity check received domain record */
-	if ((dlen < new_dlen) || ntohs(arrv_dom->len) != new_dlen) {
-		pr_warn_ratelimited("Received illegal domain record\n");
+	if (dlen < dom_rec_len(arrv_dom, 0))
 		return;
-	}
+	if (dlen != dom_rec_len(arrv_dom, new_member_cnt))
+		return;
+	if ((dlen < new_dlen) || ntohs(arrv_dom->len) != new_dlen)
+		return;
 
 	/* Synch generation numbers with peer if link just came up */
 	if (!state->synched) {
@@ -728,12 +728,13 @@ int tipc_nl_add_monitor_peer(struct net *net, struct tipc_nl_msg *msg,
 			     u32 bearer_id, u32 *prev_node)
 {
 	struct tipc_monitor *mon = tipc_monitor(net, bearer_id);
-	struct tipc_peer *peer = mon->self;
+	struct tipc_peer *peer;
 
 	if (!mon)
 		return -EINVAL;
 
 	read_lock_bh(&mon->lock);
+	peer = mon->self;
 	do {
 		if (*prev_node) {
 			if (peer->addr == *prev_node)
@@ -794,10 +795,10 @@ int __tipc_nl_add_monitor(struct net *net, struct tipc_nl_msg *msg,
 	return 0;
 
 attr_msg_full:
+	read_unlock_bh(&mon->lock);
 	nla_nest_cancel(msg->skb, attrs);
 msg_full:
 	genlmsg_cancel(msg->skb, hdr);
-	read_unlock_bh(&mon->lock);
 
 	return -EMSGSIZE;
 }

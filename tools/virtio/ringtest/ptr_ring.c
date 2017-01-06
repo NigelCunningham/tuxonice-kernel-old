@@ -13,6 +13,7 @@
 #define cache_line_size() SMP_CACHE_BYTES
 #define ____cacheline_aligned_in_smp __attribute__ ((aligned (SMP_CACHE_BYTES)))
 #define unlikely(x)    (__builtin_expect(!!(x), 0))
+#define likely(x)    (__builtin_expect(!!(x), 1))
 #define ALIGN(x, a) (((x) + (a) - 1) / (a) * (a))
 typedef pthread_spinlock_t  spinlock_t;
 
@@ -132,18 +133,9 @@ void *get_buf(unsigned *lenp, void **bufp)
 	return datap;
 }
 
-void poll_used(void)
+bool used_empty()
 {
-	void *b;
-
-	do {
-		if (tailcnt == headcnt || __ptr_ring_full(&array)) {
-			b = NULL;
-			barrier();
-		} else {
-			b = "Buffer\n";
-		}
-	} while (!b);
+	return (tailcnt == headcnt || __ptr_ring_full(&array));
 }
 
 void disable_call()
@@ -172,14 +164,9 @@ bool enable_kick()
 	assert(0);
 }
 
-void poll_avail(void)
+bool avail_empty()
 {
-	void *b;
-
-	do {
-		barrier();
-		b = __ptr_ring_peek(&array);
-	} while (!b);
+	return !__ptr_ring_peek(&array);
 }
 
 bool use_buf(unsigned *lenp, void **bufp)

@@ -116,19 +116,19 @@ static int build_attention_list(void)
 static void pageset2_full(void)
 {
         struct zone *zone;
-        struct page *page;
+        struct page *page, *next;
         unsigned long flags;
         int i;
 
         toi_trace_index++;
 
         for_each_populated_zone(zone) {
-                spin_lock_irqsave(&zone->lru_lock, flags);
+                spin_lock_irqsave(zone_lru_lock(zone), flags);
                 for_each_lru(i) {
                         if (!zone_page_state(zone, NR_LRU_BASE + i))
                                 continue;
 
-                        list_for_each_entry(page, &zone->lruvec.lists[i], lru) {
+                        list_for_each_entry_safe(page, next, &zone->zone_pgdat->lruvec.lists[i], lru) {
                                 struct address_space *mapping;
 
                                 mapping = page_mapping(page);
@@ -143,7 +143,7 @@ static void pageset2_full(void)
                                 }
                         }
                 }
-                spin_unlock_irqrestore(&zone->lru_lock, flags);
+                spin_unlock_irqrestore(zone_lru_lock(zone), flags);
         }
 }
 

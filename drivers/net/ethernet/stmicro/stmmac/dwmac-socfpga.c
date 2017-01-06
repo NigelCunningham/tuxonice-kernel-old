@@ -135,7 +135,9 @@ static int socfpga_dwmac_parse_data(struct socfpga_dwmac *dwmac, struct device *
 
 	np_splitter = of_parse_phandle(np, "altr,emac-splitter", 0);
 	if (np_splitter) {
-		if (of_address_to_resource(np_splitter, 0, &res_splitter)) {
+		ret = of_address_to_resource(np_splitter, 0, &res_splitter);
+		of_node_put(np_splitter);
+		if (ret) {
 			dev_info(dev, "Missing emac splitter address\n");
 			return -EINVAL;
 		}
@@ -159,14 +161,17 @@ static int socfpga_dwmac_parse_data(struct socfpga_dwmac *dwmac, struct device *
 				dev_err(dev,
 					"%s: ERROR: missing emac splitter address\n",
 					__func__);
-				return -EINVAL;
+				ret = -EINVAL;
+				goto err_node_put;
 			}
 
 			dwmac->splitter_base =
 			    devm_ioremap_resource(dev, &res_splitter);
 
-			if (IS_ERR(dwmac->splitter_base))
-				return PTR_ERR(dwmac->splitter_base);
+			if (IS_ERR(dwmac->splitter_base)) {
+				ret = PTR_ERR(dwmac->splitter_base);
+				goto err_node_put;
+			}
 		}
 
 		index = of_property_match_string(np_sgmii_adapter, "reg-names",
@@ -178,14 +183,17 @@ static int socfpga_dwmac_parse_data(struct socfpga_dwmac *dwmac, struct device *
 				dev_err(dev,
 					"%s: ERROR: failed mapping adapter\n",
 					__func__);
-				return -EINVAL;
+				ret = -EINVAL;
+				goto err_node_put;
 			}
 
 			dwmac->pcs.sgmii_adapter_base =
 			    devm_ioremap_resource(dev, &res_sgmii_adapter);
 
-			if (IS_ERR(dwmac->pcs.sgmii_adapter_base))
-				return PTR_ERR(dwmac->pcs.sgmii_adapter_base);
+			if (IS_ERR(dwmac->pcs.sgmii_adapter_base)) {
+				ret = PTR_ERR(dwmac->pcs.sgmii_adapter_base);
+				goto err_node_put;
+			}
 		}
 
 		index = of_property_match_string(np_sgmii_adapter, "reg-names",
@@ -197,22 +205,30 @@ static int socfpga_dwmac_parse_data(struct socfpga_dwmac *dwmac, struct device *
 				dev_err(dev,
 					"%s: ERROR: failed mapping tse control port\n",
 					__func__);
-				return -EINVAL;
+				ret = -EINVAL;
+				goto err_node_put;
 			}
 
 			dwmac->pcs.tse_pcs_base =
 			    devm_ioremap_resource(dev, &res_tse_pcs);
 
-			if (IS_ERR(dwmac->pcs.tse_pcs_base))
-				return PTR_ERR(dwmac->pcs.tse_pcs_base);
+			if (IS_ERR(dwmac->pcs.tse_pcs_base)) {
+				ret = PTR_ERR(dwmac->pcs.tse_pcs_base);
+				goto err_node_put;
+			}
 		}
 	}
 	dwmac->reg_offset = reg_offset;
 	dwmac->reg_shift = reg_shift;
 	dwmac->sys_mgr_base_addr = sys_mgr_base_addr;
 	dwmac->dev = dev;
+	of_node_put(np_sgmii_adapter);
 
 	return 0;
+
+err_node_put:
+	of_node_put(np_sgmii_adapter);
+	return ret;
 }
 
 static int socfpga_dwmac_set_phy_mode(struct socfpga_dwmac *dwmac)
@@ -288,6 +304,8 @@ static int socfpga_dwmac_probe(struct platform_device *pdev)
 	struct device		*dev = &pdev->dev;
 	int			ret;
 	struct socfpga_dwmac	*dwmac;
+	struct net_device	*ndev;
+	struct stmmac_priv	*stpriv;
 
 	ret = stmmac_get_platform_resources(pdev, &stmmac_res);
 	if (ret)
@@ -298,32 +316,43 @@ static int socfpga_dwmac_probe(struct platform_device *pdev)
 		return PTR_ERR(plat_dat);
 
 	dwmac = devm_kzalloc(dev, sizeof(*dwmac), GFP_KERNEL);
-	if (!dwmac)
-		return -ENOMEM;
+	if (!dwmac) {
+		ret = -ENOMEM;
+		goto err_remove_config_dt;
+	}
 
 	ret = socfpga_dwmac_parse_data(dwmac, dev);
 	if (ret) {
 		dev_err(dev, "Unable to parse OF data\n");
-		return ret;
+		goto err_remove_config_dt;
 	}
 
 	plat_dat->bsp_priv = dwmac;
 	plat_dat->fix_mac_speed = socfpga_dwmac_fix_mac_speed;
 
 	ret = stmmac_dvr_probe(&pdev->dev, plat_dat, &stmmac_res);
+	if (ret)
+		goto err_remove_config_dt;
 
-	if (!ret) {
-		struct net_device *ndev = platform_get_drvdata(pdev);
-		struct stmmac_priv *stpriv = netdev_priv(ndev);
+	ndev = platform_get_drvdata(pdev);
+	stpriv = netdev_priv(ndev);
 
-		/* The socfpga driver needs to control the stmmac reset to
-		 * set the phy mode. Create a copy of the core reset handel
-		 * so it can be used by the driver later.
-		 */
-		dwmac->stmmac_rst = stpriv->stmmac_rst;
+	/* The socfpga driver needs to control the stmmac reset to set the phy
+	 * mode. Create a copy of the core reset handle so it can be used by
+	 * the driver later.
+	 */
+	dwmac->stmmac_rst = stpriv->stmmac_rst;
 
-		ret = socfpga_dwmac_set_phy_mode(dwmac);
-	}
+	ret = socfpga_dwmac_set_phy_mode(dwmac);
+	if (ret)
+		goto err_dvr_remove;
+
+	return 0;
+
+err_dvr_remove:
+	stmmac_dvr_remove(&pdev->dev);
+err_remove_config_dt:
+	stmmac_remove_config_dt(pdev, plat_dat);
 
 	return ret;
 }

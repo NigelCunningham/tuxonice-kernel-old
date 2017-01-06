@@ -878,7 +878,7 @@ static inline struct timer_base *get_timer_base(u32 tflags)
 
 #ifdef CONFIG_NO_HZ_COMMON
 static inline struct timer_base *
-__get_target_base(struct timer_base *base, unsigned tflags)
+get_target_base(struct timer_base *base, unsigned tflags)
 {
 #ifdef CONFIG_SMP
 	if ((tflags & TIMER_PINNED) || !base->migration_enabled)
@@ -891,25 +891,27 @@ __get_target_base(struct timer_base *base, unsigned tflags)
 
 static inline void forward_timer_base(struct timer_base *base)
 {
+	unsigned long jnow = READ_ONCE(jiffies);
+
 	/*
 	 * We only forward the base when it's idle and we have a delta between
 	 * base clock and jiffies.
 	 */
-	if (!base->is_idle || (long) (jiffies - base->clk) < 2)
+	if (!base->is_idle || (long) (jnow - base->clk) < 2)
 		return;
 
 	/*
 	 * If the next expiry value is > jiffies, then we fast forward to
 	 * jiffies otherwise we forward to the next expiry value.
 	 */
-	if (time_after(base->next_expiry, jiffies))
-		base->clk = jiffies;
+	if (time_after(base->next_expiry, jnow))
+		base->clk = jnow;
 	else
 		base->clk = base->next_expiry;
 }
 #else
 static inline struct timer_base *
-__get_target_base(struct timer_base *base, unsigned tflags)
+get_target_base(struct timer_base *base, unsigned tflags)
 {
 	return get_timer_this_cpu_base(tflags);
 }
@@ -917,14 +919,6 @@ __get_target_base(struct timer_base *base, unsigned tflags)
 static inline void forward_timer_base(struct timer_base *base) { }
 #endif
 
-static inline struct timer_base *
-get_target_base(struct timer_base *base, unsigned tflags)
-{
-	struct timer_base *target = __get_target_base(base, tflags);
-
-	forward_timer_base(target);
-	return target;
-}
 
 /*
  * We are using hashed locking: Holding per_cpu(timer_bases[x]).lock means
@@ -943,7 +937,14 @@ static struct timer_base *lock_timer_base(struct timer_list *timer,
 {
 	for (;;) {
 		struct timer_base *base;
-		u32 tf = timer->flags;
+		u32 tf;
+
+		/*
+		 * We need to use READ_ONCE() here, otherwise the compiler
+		 * might re-read @tf between the check for TIMER_MIGRATING
+		 * and spin_lock().
+		 */
+		tf = READ_ONCE(timer->flags);
 
 		if (!(tf & TIMER_MIGRATING)) {
 			base = get_timer_base(tf);
@@ -964,6 +965,8 @@ __mod_timer(struct timer_list *timer, unsigned long expires, bool pending_only)
 	unsigned long clk = 0, flags;
 	int ret = 0;
 
+	BUG_ON(!timer->function);
+
 	/*
 	 * This is a common optimization triggered by the networking code - if
 	 * the timer is re-modified to have the same timeout or ends up in the
@@ -972,13 +975,16 @@ __mod_timer(struct timer_list *timer, unsigned long expires, bool pending_only)
 	if (timer_pending(timer)) {
 		if (timer->expires == expires)
 			return 1;
-		/*
-		 * Take the current timer_jiffies of base, but without holding
-		 * the lock!
-		 */
-		base = get_timer_base(timer->flags);
-		clk = base->clk;
 
+		/*
+		 * We lock timer base and calculate the bucket index right
+		 * here. If the timer ends up in the same bucket, then we
+		 * just update the expiry time and avoid the whole
+		 * dequeue/enqueue dance.
+		 */
+		base = lock_timer_base(timer, &flags);
+
+		clk = base->clk;
 		idx = calc_wheel_index(expires, clk);
 
 		/*
@@ -988,14 +994,14 @@ __mod_timer(struct timer_list *timer, unsigned long expires, bool pending_only)
 		 */
 		if (idx == timer_get_idx(timer)) {
 			timer->expires = expires;
-			return 1;
+			ret = 1;
+			goto out_unlock;
 		}
+	} else {
+		base = lock_timer_base(timer, &flags);
 	}
 
 	timer_stats_timer_set_start_info(timer);
-	BUG_ON(!timer->function);
-
-	base = lock_timer_base(timer, &flags);
 
 	ret = detach_if_pending(timer, base, false);
 	if (!ret && pending_only)
@@ -1025,12 +1031,16 @@ __mod_timer(struct timer_list *timer, unsigned long expires, bool pending_only)
 		}
 	}
 
+	/* Try to forward a stale timer base clock */
+	forward_timer_base(base);
+
 	timer->expires = expires;
 	/*
 	 * If 'idx' was calculated above and the base time did not advance
-	 * between calculating 'idx' and taking the lock, only enqueue_timer()
-	 * and trigger_dyntick_cpu() is required. Otherwise we need to
-	 * (re)calculate the wheel index via internal_add_timer().
+	 * between calculating 'idx' and possibly switching the base, only
+	 * enqueue_timer() and trigger_dyntick_cpu() is required. Otherwise
+	 * we need to (re)calculate the wheel index via
+	 * internal_add_timer().
 	 */
 	if (idx != UINT_MAX && clk == base->clk) {
 		enqueue_timer(base, timer, idx);
@@ -1496,6 +1506,7 @@ u64 get_next_timer_interrupt(unsigned long basej, u64 basem)
 	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
 	u64 expires = KTIME_MAX;
 	unsigned long nextevt;
+	bool is_max_delta;
 
 	/*
 	 * Pretend that there is no timer pending if the cpu is offline.
@@ -1506,20 +1517,26 @@ u64 get_next_timer_interrupt(unsigned long basej, u64 basem)
 
 	spin_lock(&base->lock);
 	nextevt = __next_timer_interrupt(base);
+	is_max_delta = (nextevt == base->clk + NEXT_TIMER_MAX_DELTA);
 	base->next_expiry = nextevt;
 	/*
-	 * We have a fresh next event. Check whether we can forward the base:
+	 * We have a fresh next event. Check whether we can forward the
+	 * base. We can only do that when @basej is past base->clk
+	 * otherwise we might rewind base->clk.
 	 */
-	if (time_after(nextevt, jiffies))
-		base->clk = jiffies;
-	else if (time_after(nextevt, base->clk))
-		base->clk = nextevt;
+	if (time_after(basej, base->clk)) {
+		if (time_after(nextevt, basej))
+			base->clk = basej;
+		else if (time_after(nextevt, base->clk))
+			base->clk = nextevt;
+	}
 
 	if (time_before_eq(nextevt, basej)) {
 		expires = basem;
 		base->is_idle = false;
 	} else {
-		expires = basem + (nextevt - basej) * TICK_NSEC;
+		if (!is_max_delta)
+			expires = basem + (nextevt - basej) * TICK_NSEC;
 		/*
 		 * If we expect to sleep more than a tick, mark the base idle:
 		 */
@@ -1630,7 +1647,7 @@ static inline void __run_timers(struct timer_base *base)
 /*
  * This function runs timers and the timer-tq in bottom half context.
  */
-static void run_timer_softirq(struct softirq_action *h)
+static __latent_entropy void run_timer_softirq(struct softirq_action *h)
 {
 	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
 
@@ -1804,7 +1821,7 @@ static void migrate_timer_list(struct timer_base *new_base, struct hlist_head *h
 	}
 }
 
-static void migrate_timers(int cpu)
+int timers_dead_cpu(unsigned int cpu)
 {
 	struct timer_base *old_base;
 	struct timer_base *new_base;
@@ -1831,29 +1848,9 @@ static void migrate_timers(int cpu)
 		spin_unlock_irq(&new_base->lock);
 		put_cpu_ptr(&timer_bases);
 	}
+	return 0;
 }
 
-static int timer_cpu_notify(struct notifier_block *self,
-				unsigned long action, void *hcpu)
-{
-	switch (action) {
-	case CPU_DEAD:
-	case CPU_DEAD_FROZEN:
-		migrate_timers((long)hcpu);
-		break;
-	default:
-		break;
-	}
-
-	return NOTIFY_OK;
-}
-
-static inline void timer_register_cpu_notifier(void)
-{
-	cpu_notifier(timer_cpu_notify, 0);
-}
-#else
-static inline void timer_register_cpu_notifier(void) { }
 #endif /* CONFIG_HOTPLUG_CPU */
 
 static void __init init_timer_cpu(int cpu)
@@ -1881,7 +1878,6 @@ void __init init_timers(void)
 {
 	init_timer_cpus();
 	init_timer_stats();
-	timer_register_cpu_notifier();
 	open_softirq(TIMER_SOFTIRQ, run_timer_softirq);
 }
 
