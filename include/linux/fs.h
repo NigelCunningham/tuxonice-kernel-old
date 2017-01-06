@@ -3176,7 +3176,4 @@ static inline bool dir_relax_shared(struct inode *inode)
 extern bool path_noexec(const struct path *path);
 extern void inode_nohighmem(struct inode *inode);
 
-extern void take_super_lock(void);
-extern void release_super_lock(void);
-
 #endif /* _LINUX_FS_H */
