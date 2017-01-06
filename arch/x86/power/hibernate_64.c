@@ -110,7 +110,7 @@ static int res_phys_pud_init(pud_t *pud, unsigned long address, unsigned long en
 static int set_up_temporary_mappings(void)
 {
 	unsigned long start, end, next;
-	int error;
+	int error, result;
 
 	temp_level4_pgt = (pgd_t *)get_safe_page(GFP_ATOMIC);
 	if (!temp_level4_pgt)
