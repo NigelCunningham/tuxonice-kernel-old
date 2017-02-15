@@ -398,12 +398,10 @@ static irqreturn_t exynos4_mct_tick_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int exynos4_local_timer_setup(struct clock_event_device *evt)
+static int exynos4_local_timer_setup(struct mct_clock_event_device *mevt)
 {
-	struct mct_clock_event_device *mevt;
+	struct clock_event_device *evt = &mevt->evt;
 	unsigned int cpu = smp_processor_id();
-
-	mevt = container_of(evt, struct mct_clock_event_device, evt);
 
 	mevt->base = EXYNOS4_MCT_L_BASE(cpu);
 	sprintf(mevt->name, "mct_tick%d", cpu);
@@ -433,12 +431,15 @@ static int exynos4_local_timer_setup(struct clock_event_device *evt)
 	return 0;
 }
 
-static void exynos4_local_timer_stop(struct clock_event_device *evt)
+static void exynos4_local_timer_stop(struct mct_clock_event_device *mevt)
 {
+	struct clock_event_device *evt = &mevt->evt;
+
 	evt->set_mode(CLOCK_EVT_MODE_UNUSED, evt);
 	if (mct_int_type == MCT_INT_SPI) {
 		if (evt->irq != -1)
 			disable_irq_nosync(evt->irq);
+		exynos4_mct_write(0x1, mevt->base + MCT_L_INT_CSTAT_OFFSET);
 	} else {
 		disable_percpu_irq(mct_irqs[MCT_L0_IRQ]);
 	}
@@ -456,11 +457,11 @@ static int exynos4_mct_cpu_notify(struct notifier_block *self,
 	switch (action & ~CPU_TASKS_FROZEN) {
 	case CPU_STARTING:
 		mevt = this_cpu_ptr(&percpu_mct_tick);
-		exynos4_local_timer_setup(&mevt->evt);
+		exynos4_local_timer_setup(mevt);
 		break;
 	case CPU_DYING:
 		mevt = this_cpu_ptr(&percpu_mct_tick);
-		exynos4_local_timer_stop(&mevt->evt);
+		exynos4_local_timer_stop(mevt);
 		break;
 	}
 
@@ -526,7 +527,7 @@ static void __init exynos4_timer_resources(struct device_node *np, void __iomem 
 		goto out_irq;
 
 	/* Immediately configure the timer on the boot CPU */
-	exynos4_local_timer_setup(&mevt->evt);
+	exynos4_local_timer_setup(mevt);
 	return;
 
 out_irq:
