@@ -2642,12 +2642,14 @@ static int nf_tables_newset(struct sock *nlsk, struct sk_buff *skb,
 
 	err = nft_trans_set_add(&ctx, NFT_MSG_NEWSET, set);
 	if (err < 0)
-		goto err2;
+		goto err3;
 
 	list_add_tail_rcu(&set->list, &table->sets);
 	table->use++;
 	return 0;
 
+err3:
+	ops->destroy(set);
 err2:
 	kfree(set);
 err1:
@@ -3710,6 +3712,31 @@ static int nf_tables_check_loops(const struct nft_ctx *ctx,
 
 	return 0;
 }
+
+/**
+ *	nft_parse_u32_check - fetch u32 attribute and check for maximum value
+ *
+ *	@attr: netlink attribute to fetch value from
+ *	@max: maximum value to be stored in dest
+ *	@dest: pointer to the variable
+ *
+ *	Parse, check and store a given u32 netlink attribute into variable.
+ *	This function returns -ERANGE if the value goes over maximum value.
+ *	Otherwise a 0 is returned and the attribute value is stored in the
+ *	destination variable.
+ */
+int nft_parse_u32_check(const struct nlattr *attr, int max, u32 *dest)
+{
+	u32 val;
+
+	val = ntohl(nla_get_be32(attr));
+	if (val > max)
+		return -ERANGE;
+
+	*dest = val;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(nft_parse_u32_check);
 
 /**
  *	nft_validate_input_register - validate an expressions' input register

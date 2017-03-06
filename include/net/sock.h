@@ -1669,7 +1669,13 @@ static inline void sock_put(struct sock *sk)
  */
 void sock_gen_put(struct sock *sk);
 
-int sk_receive_skb(struct sock *sk, struct sk_buff *skb, const int nested);
+int __sk_receive_skb(struct sock *sk, struct sk_buff *skb, const int nested,
+		     unsigned int trim_cap);
+static inline int sk_receive_skb(struct sock *sk, struct sk_buff *skb,
+				 const int nested)
+{
+	return __sk_receive_skb(sk, skb, nested, 1);
+}
 
 static inline void sk_tx_queue_set(struct sock *sk, int tx_queue)
 {
@@ -2026,6 +2032,7 @@ void sk_reset_timer(struct sock *sk, struct timer_list *timer,
 
 void sk_stop_timer(struct sock *sk, struct timer_list *timer);
 
+int __sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb);
 int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb);
 
 int sock_queue_err_skb(struct sock *sk, struct sk_buff *skb);

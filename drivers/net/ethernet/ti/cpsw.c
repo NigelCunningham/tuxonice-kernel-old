@@ -1939,6 +1939,7 @@ static int cpsw_probe_dt(struct cpsw_platform_data *data,
 		}
 		snprintf(slave_data->phy_id, sizeof(slave_data->phy_id),
 			 PHY_ID_FMT, mdio->name, phyid);
+		put_device(&mdio->dev);
 
 		mac_addr = of_get_mac_address(slave_node);
 		if (mac_addr)
@@ -2140,13 +2141,12 @@ static int cpsw_probe(struct platform_device *pdev)
 	 */
 	pm_runtime_get_sync(&pdev->dev);
 	priv->version = readl(&priv->regs->id_ver);
-	pm_runtime_put_sync(&pdev->dev);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 	priv->wr_regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->wr_regs)) {
 		ret = PTR_ERR(priv->wr_regs);
-		goto clean_runtime_disable_ret;
+		goto clean_pm_runtime_put_ret;
 	}
 
 	memset(&dma_params, 0, sizeof(dma_params));
@@ -2183,7 +2183,7 @@ static int cpsw_probe(struct platform_device *pdev)
 	default:
 		dev_err(priv->dev, "unknown version 0x%08x\n", priv->version);
 		ret = -ENODEV;
-		goto clean_runtime_disable_ret;
+		goto clean_pm_runtime_put_ret;
 	}
 	for (i = 0; i < priv->data.slaves; i++) {
 		struct cpsw_slave *slave = &priv->slaves[i];
@@ -2211,7 +2211,7 @@ static int cpsw_probe(struct platform_device *pdev)
 	if (!priv->dma) {
 		dev_err(priv->dev, "error initializing dma\n");
 		ret = -ENOMEM;
-		goto clean_runtime_disable_ret;
+		goto clean_pm_runtime_put_ret;
 	}
 
 	priv->txch = cpdma_chan_create(priv->dma, tx_chan_num(0),
@@ -2279,18 +2279,24 @@ static int cpsw_probe(struct platform_device *pdev)
 		ret = cpsw_probe_dual_emac(pdev, priv);
 		if (ret) {
 			cpsw_err(priv, probe, "error probe slave 2 emac interface\n");
-			goto clean_ale_ret;
+			goto clean_unregister_netdev_ret;
 		}
 	}
 
+	pm_runtime_put(&pdev->dev);
+
 	return 0;
 
+clean_unregister_netdev_ret:
+	unregister_netdev(ndev);
 clean_ale_ret:
 	cpsw_ale_destroy(priv->ale);
 clean_dma_ret:
 	cpdma_chan_destroy(priv->txch);
 	cpdma_chan_destroy(priv->rxch);
 	cpdma_ctlr_destroy(priv->dma);
+clean_pm_runtime_put_ret:
+	pm_runtime_put_sync(&pdev->dev);
 clean_runtime_disable_ret:
 	pm_runtime_disable(&pdev->dev);
 clean_ndev_ret:

@@ -432,9 +432,8 @@ static void sock_disable_timestamp(struct sock *sk, unsigned long flags)
 }
 
 
-int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
+int __sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 {
-	int err;
 	int skb_len;
 	unsigned long flags;
 	struct sk_buff_head *list = &sk->sk_receive_queue;
@@ -444,10 +443,6 @@ int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 		trace_sock_rcvqueue_full(sk, skb);
 		return -ENOMEM;
 	}
-
-	err = sk_filter(sk, skb);
-	if (err)
-		return err;
 
 	if (!sk_rmem_schedule(sk, skb, skb->truesize)) {
 		atomic_inc(&sk->sk_drops);
@@ -478,13 +473,26 @@ int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 		sk->sk_data_ready(sk);
 	return 0;
 }
+EXPORT_SYMBOL(__sock_queue_rcv_skb);
+
+int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
+{
+	int err;
+
+	err = sk_filter(sk, skb);
+	if (err)
+		return err;
+
+	return __sock_queue_rcv_skb(sk, skb);
+}
 EXPORT_SYMBOL(sock_queue_rcv_skb);
 
-int sk_receive_skb(struct sock *sk, struct sk_buff *skb, const int nested)
+int __sk_receive_skb(struct sock *sk, struct sk_buff *skb,
+		     const int nested, unsigned int trim_cap)
 {
 	int rc = NET_RX_SUCCESS;
 
-	if (sk_filter(sk, skb))
+	if (sk_filter_trim_cap(sk, skb, trim_cap))
 		goto discard_and_relse;
 
 	skb->dev = NULL;
@@ -520,7 +528,7 @@ discard_and_relse:
 	kfree_skb(skb);
 	goto out;
 }
-EXPORT_SYMBOL(sk_receive_skb);
+EXPORT_SYMBOL(__sk_receive_skb);
 
 struct dst_entry *__sk_dst_check(struct sock *sk, u32 cookie)
 {
@@ -741,7 +749,7 @@ int sock_setsockopt(struct socket *sock, int level, int optname,
 		val = min_t(u32, val, sysctl_wmem_max);
 set_sndbuf:
 		sk->sk_userlocks |= SOCK_SNDBUF_LOCK;
-		sk->sk_sndbuf = max_t(u32, val * 2, SOCK_MIN_SNDBUF);
+		sk->sk_sndbuf = max_t(int, val * 2, SOCK_MIN_SNDBUF);
 		/* Wake up sending tasks if we upped the value. */
 		sk->sk_write_space(sk);
 		break;
@@ -777,7 +785,7 @@ set_rcvbuf:
 		 * returning the value we actually used in getsockopt
 		 * is the most desirable behavior.
 		 */
-		sk->sk_rcvbuf = max_t(u32, val * 2, SOCK_MIN_RCVBUF);
+		sk->sk_rcvbuf = max_t(int, val * 2, SOCK_MIN_RCVBUF);
 		break;
 
 	case SO_RCVBUFFORCE:

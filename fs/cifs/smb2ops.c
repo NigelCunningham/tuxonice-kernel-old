@@ -228,7 +228,7 @@ SMB3_request_interfaces(const unsigned int xid, struct cifs_tcon *tcon)
 			le64_to_cpu(out_buf->LinkSpeed));
 	} else
 		cifs_dbg(VFS, "error %d on ioctl to get interface list\n", rc);
-
+	kfree(out_buf);
 	return rc;
 }
 #endif /* STATS2 */
@@ -640,6 +640,7 @@ smb2_clone_range(const unsigned int xid,
 
 cchunk_out:
 	kfree(pcchunk);
+	kfree(retbuf);
 	return rc;
 }
 
@@ -855,7 +856,7 @@ smb2_set_lease_key(struct inode *inode, struct cifs_fid *fid)
 static void
 smb2_new_lease_key(struct cifs_fid *fid)
 {
-	get_random_bytes(fid->lease_key, SMB2_LEASE_KEY_SIZE);
+	generate_random_uuid(fid->lease_key);
 }
 
 #define SMB2_SYMLINK_STRUCT_SIZE \

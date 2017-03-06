@@ -545,7 +545,6 @@ int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask)
 		__delete_from_page_cache(old, NULL);
 		error = page_cache_tree_insert(mapping, new, NULL);
 		BUG_ON(error);
-		mapping->nrpages++;
 		__inc_zone_page_state(new, NR_FILE_PAGES);
 		if (PageSwapBacked(new))
 			__inc_zone_page_state(new, NR_SHMEM);
@@ -1464,6 +1463,10 @@ static ssize_t do_generic_file_read(struct file *filp, loff_t *ppos,
 	unsigned long offset;      /* offset into pagecache page */
 	unsigned int prev_offset;
 	int error = 0;
+
+	if (unlikely(*ppos >= inode->i_sb->s_maxbytes))
+		return 0;
+	iov_iter_truncate(iter, inode->i_sb->s_maxbytes);
 
 	index = *ppos >> PAGE_CACHE_SHIFT;
 	prev_index = ra->prev_pos >> PAGE_CACHE_SHIFT;

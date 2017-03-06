@@ -97,6 +97,8 @@ int __ip_local_out(struct sk_buff *skb)
 
 	iph->tot_len = htons(skb->len);
 	ip_send_check(iph);
+	skb->protocol = htons(ETH_P_IP);
+
 	return nf_hook(NFPROTO_IPV4, NF_INET_LOCAL_OUT, skb, NULL,
 		       skb_dst(skb)->dev, dst_output);
 }
@@ -217,9 +219,8 @@ static int ip_finish_output_gso(struct sk_buff *skb)
 	struct sk_buff *segs;
 	int ret = 0;
 
-	/* common case: locally created skb or seglen is <= mtu */
-	if (((IPCB(skb)->flags & IPSKB_FORWARDED) == 0) ||
-	      skb_gso_network_seglen(skb) <= ip_skb_dst_mtu(skb))
+	/* common case: seglen is <= mtu */
+	if (skb_gso_network_seglen(skb) <= ip_skb_dst_mtu(skb))
 		return ip_finish_output2(skb);
 
 	/* Slowpath -  GSO segment length is exceeding the dst MTU.
