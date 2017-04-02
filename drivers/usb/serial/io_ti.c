@@ -1376,7 +1376,7 @@ stayinbootmode:
 	dev_dbg(dev, "%s - STAYING IN BOOT MODE\n", __func__);
 	serial->product_info.TiMode = TI_MODE_BOOT;
 
-	return 0;
+	return 1;
 }
 
 
@@ -2383,6 +2383,13 @@ static int edge_startup(struct usb_serial *serial)
 	struct edgeport_serial *edge_serial;
 	int status;
 
+	/* Make sure we have the required endpoints when in download mode. */
+	if (serial->interface->cur_altsetting->desc.bNumEndpoints > 1) {
+		if (serial->num_bulk_in < serial->num_ports ||
+				serial->num_bulk_out < serial->num_ports)
+			return -ENODEV;
+	}
+
 	/* create our private serial structure */
 	edge_serial = kzalloc(sizeof(struct edgeport_serial), GFP_KERNEL);
 	if (!edge_serial)
@@ -2393,10 +2400,13 @@ static int edge_startup(struct usb_serial *serial)
 	usb_set_serial_data(serial, edge_serial);
 
 	status = download_fw(edge_serial);
-	if (status) {
+	if (status < 0) {
 		kfree(edge_serial);
 		return status;
 	}
+
+	if (status > 0)
+		return 1;	/* bind but do not register any ports */
 
 	return 0;
 }

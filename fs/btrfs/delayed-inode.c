@@ -1371,7 +1371,8 @@ release_path:
 	total_done++;
 
 	btrfs_release_prepared_delayed_node(delayed_node);
-	if (async_work->nr == 0 || total_done < async_work->nr)
+	if ((async_work->nr == 0 && total_done < BTRFS_DELAYED_WRITEBACK) ||
+	    total_done < async_work->nr)
 		goto again;
 
 free_path:
@@ -1383,11 +1384,12 @@ out:
 
 
 static int btrfs_wq_run_delayed_node(struct btrfs_delayed_root *delayed_root,
-				     struct btrfs_root *root, int nr)
+				     struct btrfs_fs_info *fs_info, int nr)
 {
 	struct btrfs_async_delayed_work *async_work;
 
-	if (atomic_read(&delayed_root->items) < BTRFS_DELAYED_BACKGROUND)
+	if (atomic_read(&delayed_root->items) < BTRFS_DELAYED_BACKGROUND ||
+	    btrfs_workqueue_normal_congested(fs_info->delayed_workers))
 		return 0;
 
 	async_work = kmalloc(sizeof(*async_work), GFP_NOFS);
@@ -1399,7 +1401,7 @@ static int btrfs_wq_run_delayed_node(struct btrfs_delayed_root *delayed_root,
 			btrfs_async_run_delayed_root, NULL, NULL);
 	async_work->nr = nr;
 
-	btrfs_queue_work(root->fs_info->delayed_workers, &async_work->work);
+	btrfs_queue_work(fs_info->delayed_workers, &async_work->work);
 	return 0;
 }
 
@@ -1426,6 +1428,7 @@ static int could_end_wait(struct btrfs_delayed_root *delayed_root, int seq)
 void btrfs_balance_delayed_items(struct btrfs_root *root)
 {
 	struct btrfs_delayed_root *delayed_root;
+	struct btrfs_fs_info *fs_info = root->fs_info;
 
 	delayed_root = btrfs_get_delayed_root(root);
 
@@ -1438,7 +1441,7 @@ void btrfs_balance_delayed_items(struct btrfs_root *root)
 
 		seq = atomic_read(&delayed_root->items_seq);
 
-		ret = btrfs_wq_run_delayed_node(delayed_root, root, 0);
+		ret = btrfs_wq_run_delayed_node(delayed_root, fs_info, 0);
 		if (ret)
 			return;
 
@@ -1447,7 +1450,7 @@ void btrfs_balance_delayed_items(struct btrfs_root *root)
 		return;
 	}
 
-	btrfs_wq_run_delayed_node(delayed_root, root, BTRFS_DELAYED_BATCH);
+	btrfs_wq_run_delayed_node(delayed_root, fs_info, BTRFS_DELAYED_BATCH);
 }
 
 /* Will return 0 or -ENOMEM */
