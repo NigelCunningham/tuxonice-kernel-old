@@ -2145,6 +2145,29 @@ void scsi_mq_destroy_tags(struct Scsi_Host *shost)
 	blk_mq_free_tag_set(&shost->tag_set);
 }
 
+/**
+ * scsi_device_from_queue - return sdev associated with a request_queue
+ * @q: The request queue to return the sdev from
+ *
+ * Return the sdev associated with a request queue or NULL if the
+ * request_queue does not reference a SCSI device.
+ */
+struct scsi_device *scsi_device_from_queue(struct request_queue *q)
+{
+	struct scsi_device *sdev = NULL;
+
+	if (q->mq_ops) {
+		if (q->mq_ops == &scsi_mq_ops)
+			sdev = q->queuedata;
+	} else if (q->request_fn == scsi_request_fn)
+		sdev = q->queuedata;
+	if (!sdev || !get_device(&sdev->sdev_gendev))
+		sdev = NULL;
+
+	return sdev;
+}
+EXPORT_SYMBOL_GPL(scsi_device_from_queue);
+
 /*
  * Function:    scsi_block_requests()
  *
@@ -2857,6 +2880,8 @@ EXPORT_SYMBOL(scsi_target_resume);
 /**
  * scsi_internal_device_block - internal function to put a device temporarily into the SDEV_BLOCK state
  * @sdev:	device to block
+ * @wait:	Whether or not to wait until ongoing .queuecommand() /
+ *		.queue_rq() calls have finished.
  *
  * Block request made by scsi lld's to temporarily stop all
  * scsi commands on the specified device. May sleep.
@@ -2874,7 +2899,7 @@ EXPORT_SYMBOL(scsi_target_resume);
  * remove the rport mutex lock and unlock calls from srp_queuecommand().
  */
 int
-scsi_internal_device_block(struct scsi_device *sdev)
+scsi_internal_device_block(struct scsi_device *sdev, bool wait)
 {
 	struct request_queue *q = sdev->request_queue;
 	unsigned long flags;
@@ -2894,12 +2919,16 @@ scsi_internal_device_block(struct scsi_device *sdev)
 	 * request queue. 
 	 */
 	if (q->mq_ops) {
-		blk_mq_quiesce_queue(q);
+		if (wait)
+			blk_mq_quiesce_queue(q);
+		else
+			blk_mq_stop_hw_queues(q);
 	} else {
 		spin_lock_irqsave(q->queue_lock, flags);
 		blk_stop_queue(q);
 		spin_unlock_irqrestore(q->queue_lock, flags);
-		scsi_wait_for_queuecommand(sdev);
+		if (wait)
+			scsi_wait_for_queuecommand(sdev);
 	}
 
 	return 0;
@@ -2961,7 +2990,7 @@ EXPORT_SYMBOL_GPL(scsi_internal_device_unblock);
 static void
 device_block(struct scsi_device *sdev, void *data)
 {
-	scsi_internal_device_block(sdev);
+	scsi_internal_device_block(sdev, true);
 }
 
 static int
