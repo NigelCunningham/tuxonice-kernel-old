@@ -860,9 +860,6 @@ static void cpufreq_init_policy(struct cpufreq_policy *policy)
 
 	/* set default policy */
 	ret = __cpufreq_set_policy(policy, &new_policy);
-	policy->user_policy.policy = policy->policy;
-	policy->user_policy.governor = policy->governor;
-
 	if (ret) {
 		pr_debug("setting policy failed\n");
 		if (cpufreq_driver->exit)
@@ -872,8 +869,7 @@ static void cpufreq_init_policy(struct cpufreq_policy *policy)
 
 #ifdef CONFIG_HOTPLUG_CPU
 static int cpufreq_add_policy_cpu(struct cpufreq_policy *policy,
-				  unsigned int cpu, struct device *dev,
-				  bool frozen)
+				  unsigned int cpu, struct device *dev)
 {
 	int ret = 0, has_target = !!cpufreq_driver->target;
 	unsigned long flags;
@@ -904,11 +900,7 @@ static int cpufreq_add_policy_cpu(struct cpufreq_policy *policy,
 		}
 	}
 
-	/* Don't touch sysfs links during light-weight init */
-	if (!frozen)
-		ret = sysfs_create_link(&dev->kobj, &policy->kobj, "cpufreq");
-
-	return ret;
+	return sysfs_create_link(&dev->kobj, &policy->kobj, "cpufreq");
 }
 #endif
 
@@ -949,6 +941,27 @@ err_free_policy:
 	kfree(policy);
 
 	return NULL;
+}
+
+static void cpufreq_policy_put_kobj(struct cpufreq_policy *policy)
+{
+	struct kobject *kobj;
+	struct completion *cmp;
+
+	lock_policy_rwsem_read(policy->cpu);
+	kobj = &policy->kobj;
+	cmp = &policy->kobj_unregister;
+	unlock_policy_rwsem_read(policy->cpu);
+	kobject_put(kobj);
+
+	/*
+	 * We need to make sure that the underlying kobj is
+	 * actually not referenced anymore by anybody before we
+	 * proceed with unloading.
+	 */
+	pr_debug("waiting for dropping of refcount\n");
+	wait_for_completion(cmp);
+	pr_debug("wait complete\n");
 }
 
 static void cpufreq_policy_free(struct cpufreq_policy *policy)
@@ -1020,7 +1033,7 @@ static int __cpufreq_add_dev(struct device *dev, struct subsys_interface *sif,
 	list_for_each_entry(tpolicy, &cpufreq_policy_list, policy_list) {
 		if (cpumask_test_cpu(cpu, tpolicy->related_cpus)) {
 			read_unlock_irqrestore(&cpufreq_driver_lock, flags);
-			ret = cpufreq_add_policy_cpu(tpolicy, cpu, dev, frozen);
+			ret = cpufreq_add_policy_cpu(tpolicy, cpu, dev);
 			up_read(&cpufreq_rwsem);
 			return ret;
 		}
@@ -1028,15 +1041,17 @@ static int __cpufreq_add_dev(struct device *dev, struct subsys_interface *sif,
 	read_unlock_irqrestore(&cpufreq_driver_lock, flags);
 #endif
 
-	if (frozen)
-		/* Restore the saved policy when doing light-weight init */
-		policy = cpufreq_policy_restore(cpu);
-	else
+	/*
+	 * Restore the saved policy when doing light-weight init and fall back
+	 * to the full init if that fails.
+	 */
+	policy = frozen ? cpufreq_policy_restore(cpu) : NULL;
+	if (!policy) {
+		frozen = false;
 		policy = cpufreq_policy_alloc();
-
-	if (!policy)
-		goto nomem_out;
-
+		if (!policy)
+			goto nomem_out;
+	}
 
 	/*
 	 * In the resume path, since we restore a saved policy, the assignment
@@ -1073,8 +1088,10 @@ static int __cpufreq_add_dev(struct device *dev, struct subsys_interface *sif,
 	 */
 	cpumask_and(policy->cpus, policy->cpus, cpu_online_mask);
 
-	policy->user_policy.min = policy->min;
-	policy->user_policy.max = policy->max;
+	if (!frozen) {
+		policy->user_policy.min = policy->min;
+		policy->user_policy.max = policy->max;
+	}
 
 	blocking_notifier_call_chain(&cpufreq_policy_notifier_list,
 				     CPUFREQ_START, policy);
@@ -1105,6 +1122,11 @@ static int __cpufreq_add_dev(struct device *dev, struct subsys_interface *sif,
 
 	cpufreq_init_policy(policy);
 
+	if (!frozen) {
+		policy->user_policy.policy = policy->policy;
+		policy->user_policy.governor = policy->governor;
+	}
+
 	kobject_uevent(&policy->kobj, KOBJ_ADD);
 	up_read(&cpufreq_rwsem);
 
@@ -1119,7 +1141,13 @@ err_out_unregister:
 	write_unlock_irqrestore(&cpufreq_driver_lock, flags);
 
 err_set_policy_cpu:
+	if (frozen) {
+		/* Do not leave stale fallback data behind. */
+		per_cpu(cpufreq_cpu_data_fallback, cpu) = NULL;
+		cpufreq_policy_put_kobj(policy);
+	}
 	cpufreq_policy_free(policy);
+
 nomem_out:
 	up_read(&cpufreq_rwsem);
 
@@ -1141,17 +1169,13 @@ static int cpufreq_add_dev(struct device *dev, struct subsys_interface *sif)
 }
 
 static int cpufreq_nominate_new_policy_cpu(struct cpufreq_policy *policy,
-					   unsigned int old_cpu, bool frozen)
+					   unsigned int old_cpu)
 {
 	struct device *cpu_dev;
 	int ret;
 
 	/* first sibling now owns the new sysfs dir */
 	cpu_dev = get_cpu_device(cpumask_any_but(policy->cpus, old_cpu));
-
-	/* Don't touch sysfs files during light-weight tear-down */
-	if (frozen)
-		return cpu_dev->id;
 
 	sysfs_remove_link(&cpu_dev->kobj, "cpufreq");
 	ret = kobject_move(&policy->kobj, &cpu_dev->kobj);
@@ -1220,7 +1244,7 @@ static int __cpufreq_remove_dev_prepare(struct device *dev,
 			sysfs_remove_link(&dev->kobj, "cpufreq");
 	} else if (cpus > 1) {
 
-		new_cpu = cpufreq_nominate_new_policy_cpu(policy, cpu, frozen);
+		new_cpu = cpufreq_nominate_new_policy_cpu(policy, cpu);
 		if (new_cpu >= 0) {
 			update_policy_cpu(policy, new_cpu);
 
@@ -1242,8 +1266,6 @@ static int __cpufreq_remove_dev_finish(struct device *dev,
 	int ret;
 	unsigned long flags;
 	struct cpufreq_policy *policy;
-	struct kobject *kobj;
-	struct completion *cmp;
 
 	read_lock_irqsave(&cpufreq_driver_lock, flags);
 	policy = per_cpu(cpufreq_cpu_data, cpu);
@@ -1273,22 +1295,8 @@ static int __cpufreq_remove_dev_finish(struct device *dev,
 			}
 		}
 
-		if (!frozen) {
-			lock_policy_rwsem_read(cpu);
-			kobj = &policy->kobj;
-			cmp = &policy->kobj_unregister;
-			unlock_policy_rwsem_read(cpu);
-			kobject_put(kobj);
-
-			/*
-			 * We need to make sure that the underlying kobj is
-			 * actually not referenced anymore by anybody before we
-			 * proceed with unloading.
-			 */
-			pr_debug("waiting for dropping of refcount\n");
-			wait_for_completion(cmp);
-			pr_debug("wait complete\n");
-		}
+		if (!frozen)
+			cpufreq_policy_put_kobj(policy);
 
 		/*
 		 * Perform the ->exit() even during light-weight tear-down,
@@ -2061,9 +2069,6 @@ static int cpufreq_cpu_callback(struct notifier_block *nfb,
 
 	dev = get_cpu_device(cpu);
 	if (dev) {
-
-		if (action & CPU_TASKS_FROZEN)
-			frozen = true;
 
 		switch (action & ~CPU_TASKS_FROZEN) {
 		case CPU_ONLINE:
