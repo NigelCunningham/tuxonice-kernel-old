@@ -369,6 +369,22 @@ restart:
 		}
 		spin_lock_irq(&mapping->tree_lock);
 
+		if (!entry) {
+			/*
+			 * We needed to drop the page_tree lock while calling
+			 * radix_tree_preload() and we didn't have an entry to
+			 * lock.  See if another thread inserted an entry at
+			 * our index during this time.
+			 */
+			entry = __radix_tree_lookup(&mapping->page_tree, index,
+					NULL, &slot);
+			if (entry) {
+				radix_tree_preload_end();
+				spin_unlock_irq(&mapping->tree_lock);
+				goto restart;
+			}
+		}
+
 		if (pmd_downgrade) {
 			radix_tree_delete(&mapping->page_tree, index);
 			mapping->nrexceptional--;
@@ -384,19 +400,12 @@ restart:
 		if (err) {
 			spin_unlock_irq(&mapping->tree_lock);
 			/*
-			 * Someone already created the entry?  This is a
-			 * normal failure when inserting PMDs in a range
-			 * that already contains PTEs.  In that case we want
-			 * to return -EEXIST immediately.
-			 */
-			if (err == -EEXIST && !(size_flag & RADIX_DAX_PMD))
-				goto restart;
-			/*
-			 * Our insertion of a DAX PMD entry failed, most
-			 * likely because it collided with a PTE sized entry
-			 * at a different index in the PMD range.  We haven't
-			 * inserted anything into the radix tree and have no
-			 * waiters to wake.
+			 * Our insertion of a DAX entry failed, most likely
+			 * because we were inserting a PMD entry and it
+			 * collided with a PTE sized entry at a different
+			 * index in the PMD range.  We haven't inserted
+			 * anything into the radix tree and have no waiters to
+			 * wake.
 			 */
 			return ERR_PTR(err);
 		}
@@ -490,35 +499,6 @@ int dax_delete_mapping_entry(struct address_space *mapping, pgoff_t index)
 	 * at that index as well...
 	 */
 	WARN_ON_ONCE(!ret);
-	return ret;
-}
-
-/*
- * Invalidate exceptional DAX entry if easily possible. This handles DAX
- * entries for invalidate_inode_pages() so we evict the entry only if we can
- * do so without blocking.
- */
-int dax_invalidate_mapping_entry(struct address_space *mapping, pgoff_t index)
-{
-	int ret = 0;
-	void *entry, **slot;
-	struct radix_tree_root *page_tree = &mapping->page_tree;
-
-	spin_lock_irq(&mapping->tree_lock);
-	entry = __radix_tree_lookup(page_tree, index, NULL, &slot);
-	if (!entry || !radix_tree_exceptional_entry(entry) ||
-	    slot_locked(mapping, slot))
-		goto out;
-	if (radix_tree_tag_get(page_tree, index, PAGECACHE_TAG_DIRTY) ||
-	    radix_tree_tag_get(page_tree, index, PAGECACHE_TAG_TOWRITE))
-		goto out;
-	radix_tree_delete(page_tree, index);
-	mapping->nrexceptional--;
-	ret = 1;
-out:
-	spin_unlock_irq(&mapping->tree_lock);
-	if (ret)
-		dax_wake_mapping_entry_waiter(mapping, index, entry, true);
 	return ret;
 }
 
@@ -1020,7 +1000,7 @@ dax_iomap_actor(struct inode *inode, loff_t pos, loff_t length, void *data,
 	 * into page tables. We have to tear down these mappings so that data
 	 * written by write(2) is visible in mmap.
 	 */
-	if ((iomap->flags & IOMAP_F_NEW) && inode->i_mapping->nrpages) {
+	if (iomap->flags & IOMAP_F_NEW) {
 		invalidate_inode_pages2_range(inode->i_mapping,
 					      pos >> PAGE_SHIFT,
 					      (end - 1) >> PAGE_SHIFT);

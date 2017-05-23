@@ -109,9 +109,8 @@
 #define INT_COMPLETION			0x1
 #define INT_ERROR			0x2
 #define INT_QUEUE_STOPPED		0x4
-#define ALL_INTERRUPTS			(INT_COMPLETION| \
-					 INT_ERROR| \
-					 INT_QUEUE_STOPPED)
+#define	INT_EMPTY_QUEUE			0x8
+#define SUPPORTED_INTERRUPTS		(INT_COMPLETION | INT_ERROR)
 
 #define LSB_REGION_WIDTH		5
 #define MAX_LSB_CNT			8
@@ -178,6 +177,10 @@
 #define CCP_JOBID_MASK			0x0000003f
 
 /* ------------------------ General CCP Defines ------------------------ */
+
+#define	CCP_DMA_DFLT			0x0
+#define	CCP_DMA_PRIV			0x1
+#define	CCP_DMA_PUB			0x2
 
 #define CCP_DMAPOOL_MAX_SIZE		64
 #define CCP_DMAPOOL_ALIGN		BIT(5)
@@ -333,7 +336,10 @@ struct ccp_device {
 	void *dev_specific;
 	int (*get_irq)(struct ccp_device *ccp);
 	void (*free_irq)(struct ccp_device *ccp);
+	unsigned int qim;
 	unsigned int irq;
+	bool use_tasklet;
+	struct tasklet_struct irq_tasklet;
 
 	/* I/O area used for device communication. The register mapping
 	 * starts at an offset into the mapped bar.
@@ -635,6 +641,7 @@ struct ccp_actions {
 /* Structure to hold CCP version-specific values */
 struct ccp_vdata {
 	const unsigned int version;
+	const unsigned int dma_chan_attr;
 	void (*setup)(struct ccp_device *);
 	const struct ccp_actions *perform;
 	const unsigned int bar;
