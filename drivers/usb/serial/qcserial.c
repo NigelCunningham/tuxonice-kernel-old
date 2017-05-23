@@ -22,6 +22,8 @@
 #define DRIVER_AUTHOR "Qualcomm Inc"
 #define DRIVER_DESC "Qualcomm USB Serial driver"
 
+#define QUECTEL_EC20_PID	0x9215
+
 /* standard device layouts supported by this driver */
 enum qcserial_layouts {
 	QCSERIAL_G2K = 0,	/* Gobi 2000 */
@@ -137,6 +139,7 @@ static const struct usb_device_id id_table[] = {
 	{USB_DEVICE(0x0AF0, 0x8120)},	/* Option GTM681W */
 
 	/* non-Gobi Sierra Wireless devices */
+	{DEVICE_SWI(0x03f0, 0x4e1d)},	/* HP lt4111 LTE/EV-DO/HSPA+ Gobi 4G Module */
 	{DEVICE_SWI(0x0f3d, 0x68a2)},	/* Sierra Wireless MC7700 */
 	{DEVICE_SWI(0x114f, 0x68a2)},	/* Sierra Wireless MC7750 */
 	{DEVICE_SWI(0x1199, 0x68a2)},	/* Sierra Wireless MC7710 */
@@ -152,15 +155,55 @@ static const struct usb_device_id id_table[] = {
 	{DEVICE_SWI(0x1199, 0x9056)},	/* Sierra Wireless Modem */
 	{DEVICE_SWI(0x1199, 0x9060)},	/* Sierra Wireless Modem */
 	{DEVICE_SWI(0x1199, 0x9061)},	/* Sierra Wireless Modem */
+	{DEVICE_SWI(0x1199, 0x9070)},	/* Sierra Wireless MC74xx */
+	{DEVICE_SWI(0x1199, 0x9071)},	/* Sierra Wireless MC74xx */
+	{DEVICE_SWI(0x1199, 0x9078)},	/* Sierra Wireless EM74xx */
+	{DEVICE_SWI(0x1199, 0x9079)},	/* Sierra Wireless EM74xx */
 	{DEVICE_SWI(0x413c, 0x81a2)},	/* Dell Wireless 5806 Gobi(TM) 4G LTE Mobile Broadband Card */
 	{DEVICE_SWI(0x413c, 0x81a3)},	/* Dell Wireless 5570 HSPA+ (42Mbps) Mobile Broadband Card */
 	{DEVICE_SWI(0x413c, 0x81a4)},	/* Dell Wireless 5570e HSPA+ (42Mbps) Mobile Broadband Card */
 	{DEVICE_SWI(0x413c, 0x81a8)},	/* Dell Wireless 5808 Gobi(TM) 4G LTE Mobile Broadband Card */
 	{DEVICE_SWI(0x413c, 0x81a9)},	/* Dell Wireless 5808e Gobi(TM) 4G LTE Mobile Broadband Card */
+	{DEVICE_SWI(0x413c, 0x81b1)},	/* Dell Wireless 5809e Gobi(TM) 4G LTE Mobile Broadband Card */
+	{DEVICE_SWI(0x413c, 0x81b3)},	/* Dell Wireless 5809e Gobi(TM) 4G LTE Mobile Broadband Card (rev3) */
+	{DEVICE_SWI(0x413c, 0x81b5)},	/* Dell Wireless 5811e QDL */
+	{DEVICE_SWI(0x413c, 0x81b6)},	/* Dell Wireless 5811e QDL */
 
 	{ }				/* Terminating entry */
 };
 MODULE_DEVICE_TABLE(usb, id_table);
+
+static int handle_quectel_ec20(struct device *dev, int ifnum)
+{
+	int altsetting = 0;
+
+	/*
+	 * Quectel EC20 Mini PCIe LTE module layout:
+	 * 0: DM/DIAG (use libqcdm from ModemManager for communication)
+	 * 1: NMEA
+	 * 2: AT-capable modem port
+	 * 3: Modem interface
+	 * 4: NDIS
+	 */
+	switch (ifnum) {
+	case 0:
+		dev_dbg(dev, "Quectel EC20 DM/DIAG interface found\n");
+		break;
+	case 1:
+		dev_dbg(dev, "Quectel EC20 NMEA GPS interface found\n");
+		break;
+	case 2:
+	case 3:
+		dev_dbg(dev, "Quectel EC20 Modem port found\n");
+		break;
+	case 4:
+		/* Don't claim the QMI/net interface */
+		altsetting = -1;
+		break;
+	}
+
+	return altsetting;
+}
 
 static int qcprobe(struct usb_serial *serial, const struct usb_device_id *id)
 {
@@ -237,6 +280,12 @@ static int qcprobe(struct usb_serial *serial, const struct usb_device_id *id)
 			altsetting = -1;
 		break;
 	case QCSERIAL_G2K:
+		/* handle non-standard layouts */
+		if (nintf == 5 && id->idProduct == QUECTEL_EC20_PID) {
+			altsetting = handle_quectel_ec20(dev, ifnum);
+			goto done;
+		}
+
 		/*
 		 * Gobi 2K+ USB layout:
 		 * 0: QMI/net
