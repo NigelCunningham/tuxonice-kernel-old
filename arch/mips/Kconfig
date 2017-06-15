@@ -6,6 +6,7 @@ config MIPS
 	select HAVE_CONTEXT_TRACKING
 	select HAVE_GENERIC_DMA_COHERENT
 	select HAVE_IDE
+	select HAVE_IRQ_EXIT_ON_IRQ_STACK
 	select HAVE_OPROFILE
 	select HAVE_PERF_EVENTS
 	select PERF_USE_VMALLOC
@@ -1366,7 +1367,7 @@ config CPU_MIPS32_R6
 	select CPU_SUPPORTS_MSA
 	select GENERIC_CSUM
 	select HAVE_KVM
-	select MIPS_O32_FP64_SUPPORT
+	select MIPS_O32_FP64_SUPPORT if 32BIT
 	help
 	  Choose this option to build a kernel for release 6 or later of the
 	  MIPS32 architecture.  New MIPS processors, starting with the Warrior
