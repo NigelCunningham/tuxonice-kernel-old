@@ -1661,10 +1661,7 @@ pci_xr17v35x_setup(struct serial_private *priv,
 		  struct uart_8250_port *port, int idx)
 {
 	u8 __iomem *p;
-
-	p = pci_ioremap_bar(priv->dev, 0);
-	if (p == NULL)
-		return -ENOMEM;
+	int ret;
 
 	port->port.flags |= UPF_EXAR_EFR;
 
@@ -1674,6 +1671,17 @@ pci_xr17v35x_setup(struct serial_private *priv,
 	 */
 	if (xr17v35x_has_slave(priv) && idx >= 8)
 		port->port.uartclk = (7812500 * 16 / 2);
+
+	ret = pci_default_setup(priv, board, port, idx);
+	if (ret)
+		return ret;
+
+	p = port->port.membase;
+
+	writeb(0x00, p + UART_EXAR_8XMODE);
+	writeb(UART_FCTR_EXAR_TRGD, p + UART_EXAR_FCTR);
+	writeb(128, p + UART_EXAR_TXTRG);
+	writeb(128, p + UART_EXAR_RXTRG);
 
 	/*
 	 * Setup Multipurpose Input/Output pins.
@@ -1692,13 +1700,8 @@ pci_xr17v35x_setup(struct serial_private *priv,
 		writeb(0x00, p + 0x99); /*MPIOSEL[15:8]*/
 		writeb(0x00, p + 0x9a); /*MPIOOD[15:8]*/
 	}
-	writeb(0x00, p + UART_EXAR_8XMODE);
-	writeb(UART_FCTR_EXAR_TRGD, p + UART_EXAR_FCTR);
-	writeb(128, p + UART_EXAR_TXTRG);
-	writeb(128, p + UART_EXAR_RXTRG);
-	iounmap(p);
 
-	return pci_default_setup(priv, board, port, idx);
+	return 0;
 }
 
 #define PCI_DEVICE_ID_COMMTECH_4222PCI335 0x0004
@@ -2697,6 +2700,8 @@ enum pci_board_num_t {
 	pbn_b0_4_1152000_200,
 	pbn_b0_8_1152000_200,
 
+	pbn_b0_4_1250000,
+
 	pbn_b0_2_1843200,
 	pbn_b0_4_1843200,
 
@@ -2925,6 +2930,13 @@ static struct pciserial_board pci_boards[] = {
 		.num_ports	= 8,
 		.base_baud	= 1152000,
 		.uart_offset	= 0x200,
+	},
+
+	[pbn_b0_4_1250000] = {
+		.flags		= FL_BASE0,
+		.num_ports	= 4,
+		.base_baud	= 1250000,
+		.uart_offset	= 8,
 	},
 
 	[pbn_b0_2_1843200] = {
@@ -5525,6 +5537,10 @@ static struct pci_device_id serial_pci_tbl[] = {
 	{ PCI_DEVICE(0x1c29, 0x1104), .driver_data = pbn_fintek_4 },
 	{ PCI_DEVICE(0x1c29, 0x1108), .driver_data = pbn_fintek_8 },
 	{ PCI_DEVICE(0x1c29, 0x1112), .driver_data = pbn_fintek_12 },
+
+	/* MKS Tenta SCOM-080x serial cards */
+	{ PCI_DEVICE(0x1601, 0x0800), .driver_data = pbn_b0_4_1250000 },
+	{ PCI_DEVICE(0x1601, 0xa801), .driver_data = pbn_b0_4_1250000 },
 
 	/*
 	 * These entries match devices with class COMMUNICATION_SERIAL,
