@@ -13032,6 +13032,13 @@ S:	Maintained
 F:	drivers/tc/
 F:	include/linux/tc.h
 
+TUXONICE (ENHANCED HIBERNATION)
+P:	Nigel Cunningham
+M:	nigel@nigelcunningham.com.au
+L:	tuxonice-devel@lists.nigelcunningham.com.au
+W:	http://tuxonice.net
+S:	Maintained
+
 UBI FILE SYSTEM (UBIFS)
 M:	Richard Weinberger <richard@nod.at>
 M:	Artem Bityutskiy <dedekind1@gmail.com>

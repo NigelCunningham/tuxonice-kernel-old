@@ -1402,7 +1402,7 @@ static inline struct page *alloc_slab_page(struct kmem_cache *s,
 	struct page *page;
 	int order = oo_order(oo);
 
-	flags |= __GFP_NOTRACK;
+	flags |= (__GFP_NOTRACK | ___GFP_TOI_NOTRACK);
 
 	if (node == NUMA_NO_NODE)
 		page = alloc_pages(flags, order);
@@ -3754,7 +3754,7 @@ static void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 	struct page *page;
 	void *ptr = NULL;
 
-	flags |= __GFP_COMP | __GFP_NOTRACK;
+	flags |= __GFP_COMP | __GFP_NOTRACK | __GFP_TOI_NOTRACK;
 	page = alloc_pages_node(node, flags, get_order(size));
 	if (page)
 		ptr = page_address(page);

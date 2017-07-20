@@ -50,9 +50,10 @@ static inline struct shmem_inode_info *SHMEM_I(struct inode *inode)
 extern int shmem_init(void);
 extern int shmem_fill_super(struct super_block *sb, void *data, int silent);
 extern struct file *shmem_file_setup(const char *name,
-					loff_t size, unsigned long flags);
+					loff_t size, unsigned long flags,
+					int atomic_copy);
 extern struct file *shmem_kernel_file_setup(const char *name, loff_t size,
-					    unsigned long flags);
+					    unsigned long flags, int atomic_copy);
 extern int shmem_zero_setup(struct vm_area_struct *);
 extern unsigned long shmem_get_unmapped_area(struct file *, unsigned long addr,
 		unsigned long len, unsigned long pgoff, unsigned long flags);

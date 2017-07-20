@@ -2408,6 +2408,7 @@ int drop_caches_sysctl_handler(struct ctl_table *, int,
 					void __user *, size_t *, loff_t *);
 #endif
 
+void drop_pagecache(void);
 void drop_slab(void);
 void drop_slab_node(int nid);
 

@@ -36,8 +36,12 @@ static inline char *check_image_kernel(struct swsusp_info *info)
 	return arch_hibernation_header_restore(info) ?
 			"architecture specific data" : NULL;
 }
+#else
+extern char *check_image_kernel(struct swsusp_info *info);
 #endif /* CONFIG_ARCH_HIBERNATION_HEADER */
+extern int init_header(struct swsusp_info *info);
 
+extern char resume_file[256];
 extern int hibernate_resume_nonboot_cpu_disable(void);
 
 /*
@@ -86,6 +90,7 @@ static struct kobj_attribute _name##_attr = {	\
 	.store	= _name##_store,		\
 }
 
+extern struct pbe *restore_pblist;
 #define power_attr_ro(_name) \
 static struct kobj_attribute _name##_attr = {	\
 	.attr	= {				\
@@ -286,6 +291,31 @@ static inline void suspend_thaw_processes(void)
 }
 #endif
 
+extern struct page *saveable_page(struct zone *z, unsigned long p);
+#ifdef CONFIG_HIGHMEM
+struct page *saveable_highmem_page(struct zone *z, unsigned long p);
+#else
+static
+inline void *saveable_highmem_page(struct zone *z, unsigned long p)
+{
+	return NULL;
+}
+#endif
+
+#define PBES_PER_PAGE (PAGE_SIZE / sizeof(struct pbe))
+extern struct list_head nosave_regions;
+
+/**
+ *	This structure represents a range of page frames the contents of which
+ *	should not be saved during the suspend.
+ */
+
+struct nosave_region {
+	struct list_head list;
+	unsigned long start_pfn;
+	unsigned long end_pfn;
+};
+
 #ifdef CONFIG_PM_AUTOSLEEP
 
 /* kernel/power/autosleep.c */
@@ -312,3 +342,10 @@ extern int pm_wake_lock(const char *buf);
 extern int pm_wake_unlock(const char *buf);
 
 #endif /* !CONFIG_PM_WAKELOCKS */
+
+#ifdef CONFIG_TOI
+unsigned long toi_get_nonconflicting_page(void);
+#define BM_END_OF_MAP	(~0UL)
+#else
+#define toi_get_nonconflicting_page() (0)
+#endif

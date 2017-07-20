@@ -13,6 +13,7 @@
 #include <linux/percpu.h>
 #include <linux/timex.h>
 #include <linux/static_key.h>
+#include <linux/mm.h>
 
 #include <asm/hpet.h>
 #include <asm/timer.h>
@@ -203,6 +204,10 @@ static void cyc2ns_init(int cpu)
 
 	c2n->head = c2n->data;
 	c2n->tail = c2n->data;
+
+        // Don't let TuxOnIce make data RO - a secondary CPU will cause a triple fault
+        // if it loads microcode, which then does a printk, which may end up invoking cycles_2_ns
+        SetPageTOI_Untracked(virt_to_page(c2n));
 }
 
 static inline unsigned long long cycles_2_ns(unsigned long long cyc)

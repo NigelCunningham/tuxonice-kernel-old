@@ -75,6 +75,12 @@
 #define IF_HAVE_PG_HWPOISON(flag,string)
 #endif
 
+#ifdef CONFIG_TUXONICE_
+#define IF_HAVE_PG_TUXONICE(flag,string) ,{1UL << flag, string}
+#else
+#define IF_HAVE_PG_TUXONICE(flag,string)
+#endif
+
 #if defined(CONFIG_IDLE_PAGE_TRACKING) && defined(CONFIG_64BIT)
 #define IF_HAVE_PG_IDLE(flag,string) ,{1UL << flag, string}
 #else
@@ -105,6 +111,10 @@
 IF_HAVE_PG_MLOCK(PG_mlocked,		"mlocked"	)		\
 IF_HAVE_PG_UNCACHED(PG_uncached,	"uncached"	)		\
 IF_HAVE_PG_HWPOISON(PG_hwpoison,	"hwpoison"	)		\
+IF_HAVE_PG_TUXONICE(PG_toi_untracked,   "toi_untracked" )               \
+IF_HAVE_PG_TUXONICE(PG_toi_ro,          "toi_ro"        )               \
+IF_HAVE_PG_TUXONICE(PG_toi_cbw,         "toi_cbw"       )               \
+IF_HAVE_PG_TUXONICE(PG_toi_dirty,       "toi_dirty"     )               \
 IF_HAVE_PG_IDLE(PG_young,		"young"		)		\
 IF_HAVE_PG_IDLE(PG_idle,		"idle"		)
 

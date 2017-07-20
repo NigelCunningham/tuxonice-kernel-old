@@ -175,6 +175,7 @@ void init_espfix_ap(int cpu)
 		struct page *page = alloc_pages_node(node, PGALLOC_GFP, 0);
 
 		pmd_p = (pmd_t *)page_address(page);
+                SetPageTOI_Untracked(virt_to_page(pmd_p));
 		pud = __pud(__pa(pmd_p) | (PGTABLE_PROT & ptemask));
 		paravirt_alloc_pmd(&init_mm, __pa(pmd_p) >> PAGE_SHIFT);
 		for (n = 0; n < ESPFIX_PUD_CLONES; n++)
@@ -187,6 +188,7 @@ void init_espfix_ap(int cpu)
 		struct page *page = alloc_pages_node(node, PGALLOC_GFP, 0);
 
 		pte_p = (pte_t *)page_address(page);
+                SetPageTOI_Untracked(virt_to_page(pte_p));
 		pmd = __pmd(__pa(pte_p) | (PGTABLE_PROT & ptemask));
 		paravirt_alloc_pte(&init_mm, __pa(pte_p) >> PAGE_SHIFT);
 		for (n = 0; n < ESPFIX_PMD_CLONES; n++)
@@ -195,6 +197,7 @@ void init_espfix_ap(int cpu)
 
 	pte_p = pte_offset_kernel(&pmd, addr);
 	stack_page = page_address(alloc_pages_node(node, GFP_KERNEL, 0));
+        SetPageTOI_Untracked(virt_to_page(stack_page));
 	pte = __pte(__pa(stack_page) | (__PAGE_KERNEL_RO & ptemask));
 	for (n = 0; n < ESPFIX_PTE_CLONES; n++)
 		set_pte(&pte_p[n*PTE_STRIDE], pte);

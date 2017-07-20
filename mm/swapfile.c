@@ -11,6 +11,7 @@
 #include <linux/hugetlb.h>
 #include <linux/mman.h>
 #include <linux/slab.h>
+#include <linux/export.h>
 #include <linux/kernel_stat.h>
 #include <linux/swap.h>
 #include <linux/vmalloc.h>
@@ -46,7 +47,6 @@
 static bool swap_count_continued(struct swap_info_struct *, pgoff_t,
 				 unsigned char);
 static void free_swap_count_continuations(struct swap_info_struct *);
-static sector_t map_swap_entry(swp_entry_t, struct block_device**);
 
 DEFINE_SPINLOCK(swap_lock);
 static unsigned int nr_swapfiles;
@@ -1916,7 +1916,7 @@ static void drain_mmlist(void)
  * Note that the type of this function is sector_t, but it returns page offset
  * into the bdev, not sector offset.
  */
-static sector_t map_swap_entry(swp_entry_t entry, struct block_device **bdev)
+sector_t map_swap_entry(swp_entry_t entry, struct block_device **bdev)
 {
 	struct swap_info_struct *sis;
 	struct swap_extent *start_se;
@@ -3085,7 +3085,13 @@ pgoff_t __page_file_index(struct page *page)
 	VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 	return swp_offset(swap);
 }
+
 EXPORT_SYMBOL_GPL(__page_file_index);
+
+struct swap_info_struct *get_swap_info_struct(unsigned type)
+{
+	return swap_info[type];
+}
 
 /*
  * add_swap_count_continuation - called when a swap count is duplicated

@@ -14,6 +14,7 @@
 #include <linux/hugetlb.h>		/* hstate_index_to_shift	*/
 #include <linux/prefetch.h>		/* prefetchw			*/
 #include <linux/context_tracking.h>	/* exception_enter(), ...	*/
+#include <linux/tuxonice.h>             /* incremental image support    */
 #include <linux/uaccess.h>		/* faulthandler_disabled()	*/
 
 #include <asm/cpufeature.h>		/* boot_cpu_has, ...		*/
@@ -761,6 +762,10 @@ no_context(struct pt_regs *regs, unsigned long error_code,
 	/* No context means no VMA to pass down */
 	struct vm_area_struct *vma = NULL;
 
+        if (toi_make_writable(init_mm.pgd, address)) {
+            return;
+        }
+
 	/* Are we prepared to handle this kernel fault? */
 	if (fixup_exception(regs, X86_TRAP_PF)) {
 		/*
@@ -1080,10 +1085,101 @@ mm_fault_error(struct pt_regs *regs, unsigned long error_code,
 	}
 }
 
+#ifdef CONFIG_TOI_INCREMENTAL
+/**
+ * _toi_do_cbw - Do a copy-before-write before letting the faulting process continue
+ */
+static void toi_do_cbw(struct page *page)
+{
+    struct toi_cbw_state *state = this_cpu_ptr(&toi_cbw_states);
+
+    state->active = 1;
+    wmb();
+
+    if (state->enabled && state->next && PageTOI_CBW(page)) {
+        struct toi_cbw *this = state->next;
+        memcpy(this->virt, page_address(page), PAGE_SIZE);
+        this->pfn = page_to_pfn(page);
+        state->next = this->next;
+    }
+
+    state->active = 0;
+}
+
+/**
+ * _toi_make_writable - Defuse TOI's write protection
+ */
+int _toi_make_writable(pte_t *pte)
+{
+    struct page *page = pte_page(*pte);
+    if (PageTOI_RO(page)) {
+        pgd_t *pgd = __va(read_cr3());
+        /*
+         * If this is a TuxOnIce caused fault, we may not have permission to
+         * write to a page needed to reset the permissions of the original
+         * page. Use swapper_pg_dir to get around this.
+         */
+        load_cr3(swapper_pg_dir);
+
+        set_pte_atomic(pte, pte_mkwrite(*pte));
+        SetPageTOI_Dirty(page);
+        ClearPageTOI_RO(page);
+
+        toi_do_cbw(page);
+
+        load_cr3(pgd);
+        return 1;
+    }
+    return 0;
+}
+
+/**
+ * toi_make_writable - Handle a (potential) fault caused by TOI's write protection
+ *
+ * Make a page writable that was protected. Might be because of a fault, or
+ * because we're allocating it and want it to be untracked.
+ *
+ * Note that in the fault handling case, we don't care about the error code. If
+ * called from the double fault handler, we won't have one. We just check to
+ * see if the page was made RO by TOI, and mark it dirty/release the protection
+ * if it was.
+ */
+int toi_make_writable(pgd_t *pgd, unsigned long address)
+{
+    pud_t *pud;
+    pmd_t *pmd;
+    pte_t *pte;
+
+    pgd = pgd + pgd_index(address);
+    if (!pgd_present(*pgd))
+        return 0;
+
+    pud = pud_offset(pgd, address);
+    if (!pud_present(*pud))
+        return 0;
+
+    if (pud_large(*pud))
+        return _toi_make_writable((pte_t *) pud);
+
+    pmd = pmd_offset(pud, address);
+    if (!pmd_present(*pmd))
+        return 0;
+
+    if (pmd_large(*pmd))
+        return _toi_make_writable((pte_t *) pmd);
+
+    pte = pte_offset_kernel(pmd, address);
+    if (!pte_present(*pte))
+        return 0;
+
+    return _toi_make_writable(pte);
+}
+#endif
+
 static int spurious_fault_check(unsigned long error_code, pte_t *pte)
 {
 	if ((error_code & PF_WRITE) && !pte_write(*pte))
-		return 0;
+               return 0;
 
 	if ((error_code & PF_INSTR) && !pte_exec(*pte))
 		return 0;
@@ -1279,6 +1375,15 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 	if (kmemcheck_active(regs))
 		kmemcheck_hide(regs);
 	prefetchw(&mm->mmap_sem);
+
+        /*
+         * Detect and handle page faults due to TuxOnIce making pages read-only
+         * so that it can create incremental images.
+         *
+         * Do it early to avoid double faults.
+         */
+        if (unlikely(toi_make_writable(init_mm.pgd, address)))
+            return;
 
 	if (unlikely(kmmio_fault(regs, address)))
 		return;

@@ -173,7 +173,7 @@ int big_key_preparse(struct key_preparsed_payload *prep)
 			goto err_enckey;
 
 		/* save aligned data to file */
-		file = shmem_kernel_file_setup("", enclen, 0);
+		file = shmem_kernel_file_setup("", enclen, 0, 0);
 		if (IS_ERR(file)) {
 			ret = PTR_ERR(file);
 			goto err_enckey;
