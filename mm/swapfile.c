@@ -879,7 +879,61 @@ swp_entry_t get_swap_page_of_type(int type)
 	return (swp_entry_t) {0};
 }
 
-static struct swap_info_struct *__swap_info_get(swp_entry_t entry)
+static unsigned int find_next_to_unuse(struct swap_info_struct *si,
+					unsigned int prev, bool frontswap);
+
+void get_swap_range_of_type(int type, swp_entry_t *start, swp_entry_t *end,
+		unsigned int limit)
+{
+	struct swap_info_struct *si;
+	pgoff_t start_at;
+	unsigned int i;
+
+	*start = swp_entry(0, 0);
+	*end = swp_entry(0, 0);
+	si = swap_info[type];
+	spin_lock(&si->lock);
+	if (si && (si->flags & SWP_WRITEOK)) {
+		atomic_long_dec(&nr_swap_pages);
+		/* This is called for allocating swap entry, not cache */
+		start_at = scan_swap_map(si, 1);
+		if (start_at) {
+			unsigned long stop_at = find_next_to_unuse(si, start_at, 0);
+			if (stop_at > start_at)
+				stop_at--;
+			else
+				stop_at = si->max - 1;
+			if (stop_at - start_at + 1 > limit)
+				stop_at = min_t(unsigned int,
+						start_at + limit - 1,
+						si->max - 1);
+			/* Mark them used */
+			for (i = start_at; i <= stop_at; i++)
+				si->swap_map[i] = 1;
+			/* first page already done above */
+			si->inuse_pages += stop_at - start_at;
+
+			atomic_long_sub(stop_at - start_at, &nr_swap_pages);
+			if (start_at == si->lowest_bit)
+				si->lowest_bit = stop_at + 1;
+			if (stop_at == si->highest_bit)
+				si->highest_bit = start_at - 1;
+			if (si->inuse_pages == si->pages) {
+				si->lowest_bit = si->max;
+				si->highest_bit = 0;
+			}
+			for (i = start_at + 1; i <= stop_at; i++)
+				inc_cluster_info_page(si, si->cluster_info, i);
+			si->cluster_next = stop_at + 1;
+			*start = swp_entry(type, start_at);
+			*end = swp_entry(type, stop_at);
+		} else
+			atomic_long_inc(&nr_swap_pages);
+	}
+	spin_unlock(&si->lock);
+}
+
+static struct swap_info_struct *swap_info_get(swp_entry_t entry)
 {
 	struct swap_info_struct *p;
 	unsigned long offset, type;
