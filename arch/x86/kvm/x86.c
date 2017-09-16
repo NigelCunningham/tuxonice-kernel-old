@@ -3110,11 +3110,14 @@ static void kvm_vcpu_ioctl_x86_get_xsave(struct kvm_vcpu *vcpu,
 	}
 }
 
+#define XSAVE_MXCSR_OFFSET 24
+
 static int kvm_vcpu_ioctl_x86_set_xsave(struct kvm_vcpu *vcpu,
 					struct kvm_xsave *guest_xsave)
 {
 	u64 xstate_bv =
 		*(u64 *)&guest_xsave->region[XSAVE_HDR_OFFSET / sizeof(u32)];
+	u32 mxcsr = *(u32 *)&guest_xsave->region[XSAVE_MXCSR_OFFSET / sizeof(u32)];
 
 	if (cpu_has_xsave) {
 		/*
@@ -3122,12 +3125,14 @@ static int kvm_vcpu_ioctl_x86_set_xsave(struct kvm_vcpu *vcpu,
 		 * CPUID leaf 0xD, index 0, EDX:EAX.  This is for compatibility
 		 * with old userspace.
 		 */
-		if (xstate_bv & ~kvm_supported_xcr0())
+		if (xstate_bv & ~kvm_supported_xcr0() ||
+			mxcsr & ~mxcsr_feature_mask)
 			return -EINVAL;
 		memcpy(&vcpu->arch.guest_fpu.state->xsave,
 			guest_xsave->region, vcpu->arch.guest_xstate_size);
 	} else {
-		if (xstate_bv & ~XSTATE_FPSSE)
+		if (xstate_bv & ~XSTATE_FPSSE ||
+			mxcsr & ~mxcsr_feature_mask)
 			return -EINVAL;
 		memcpy(&vcpu->arch.guest_fpu.state->fxsave,
 			guest_xsave->region, sizeof(struct i387_fxsave_struct));
@@ -4518,16 +4523,20 @@ emul_write:
 
 static int kernel_pio(struct kvm_vcpu *vcpu, void *pd)
 {
-	/* TODO: String I/O for in kernel device */
-	int r;
+	int r = 0, i;
 
-	if (vcpu->arch.pio.in)
-		r = kvm_io_bus_read(vcpu->kvm, KVM_PIO_BUS, vcpu->arch.pio.port,
-				    vcpu->arch.pio.size, pd);
-	else
-		r = kvm_io_bus_write(vcpu->kvm, KVM_PIO_BUS,
-				     vcpu->arch.pio.port, vcpu->arch.pio.size,
-				     pd);
+	for (i = 0; i < vcpu->arch.pio.count; i++) {
+		if (vcpu->arch.pio.in)
+			r = kvm_io_bus_read(vcpu->kvm, KVM_PIO_BUS, vcpu->arch.pio.port,
+					    vcpu->arch.pio.size, pd);
+		else
+			r = kvm_io_bus_write(vcpu->kvm, KVM_PIO_BUS,
+					     vcpu->arch.pio.port, vcpu->arch.pio.size,
+					     pd);
+		if (r)
+			break;
+		pd += vcpu->arch.pio.size;
+	}
 	return r;
 }
 
@@ -4564,6 +4573,8 @@ static int emulator_pio_in_emulated(struct x86_emulate_ctxt *ctxt,
 
 	if (vcpu->arch.pio.count)
 		goto data_avail;
+
+	memset(vcpu->arch.pio_data, 0, size * count);
 
 	ret = emulator_pio_in_out(vcpu, size, port, val, count, true);
 	if (ret) {
@@ -4738,6 +4749,8 @@ static bool emulator_get_segment(struct x86_emulate_ctxt *ctxt, u16 *selector,
 
 	if (var.unusable) {
 		memset(desc, 0, sizeof(*desc));
+		if (base3)
+			*base3 = 0;
 		return false;
 	}
 
@@ -7599,8 +7612,7 @@ bool kvm_arch_can_inject_async_page_present(struct kvm_vcpu *vcpu)
 	if (!(vcpu->arch.apf.msr_val & KVM_ASYNC_PF_ENABLED))
 		return true;
 	else
-		return !kvm_event_needs_reinjection(vcpu) &&
-			kvm_x86_ops->interrupt_allowed(vcpu);
+		return kvm_can_do_async_pf(vcpu);
 }
 
 void kvm_arch_register_noncoherent_dma(struct kvm *kvm)

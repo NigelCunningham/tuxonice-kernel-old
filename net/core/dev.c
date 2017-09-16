@@ -4166,8 +4166,14 @@ static gro_result_t napi_frags_finish(struct napi_struct *napi,
 		break;
 
 	case GRO_DROP:
-	case GRO_MERGED_FREE:
 		napi_reuse_skb(napi, skb);
+		break;
+
+	case GRO_MERGED_FREE:
+		if (NAPI_GRO_CB(skb)->free == NAPI_GRO_FREE_STOLEN_HEAD)
+			kmem_cache_free(skbuff_head_cache, skb);
+		else
+			napi_reuse_skb(napi, skb);
 		break;
 
 	case GRO_MERGED:
@@ -6509,8 +6515,8 @@ struct rtnl_link_stats64 *dev_get_stats(struct net_device *dev,
 	} else {
 		netdev_stats_to_stats64(storage, &dev->stats);
 	}
-	storage->rx_dropped += atomic_long_read(&dev->rx_dropped);
-	storage->tx_dropped += atomic_long_read(&dev->tx_dropped);
+	storage->rx_dropped += (unsigned long)atomic_long_read(&dev->rx_dropped);
+	storage->tx_dropped += (unsigned long)atomic_long_read(&dev->tx_dropped);
 	return storage;
 }
 EXPORT_SYMBOL(dev_get_stats);

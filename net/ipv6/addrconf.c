@@ -2823,6 +2823,7 @@ static int addrconf_notify(struct notifier_block *this, unsigned long event,
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 	struct inet6_dev *idev = __in6_dev_get(dev);
+	struct net *net = dev_net(dev);
 	int run_pending = 0;
 	int err;
 
@@ -2916,7 +2917,7 @@ static int addrconf_notify(struct notifier_block *this, unsigned long event,
 			 * IPV6_MIN_MTU stop IPv6 on this interface.
 			 */
 			if (dev->mtu < IPV6_MIN_MTU)
-				addrconf_ifdown(dev, 1);
+				addrconf_ifdown(dev, dev != net->loopback_dev);
 		}
 		break;
 
@@ -2937,6 +2938,8 @@ static int addrconf_notify(struct notifier_block *this, unsigned long event,
 		 * if MTU under IPV6_MIN_MTU.
 		 * Stop IPv6 on this interface.
 		 */
+		addrconf_ifdown(dev, dev != net->loopback_dev);
+		break;
 
 	case NETDEV_DOWN:
 	case NETDEV_UNREGISTER:
@@ -2971,6 +2974,7 @@ static int addrconf_notify(struct notifier_block *this, unsigned long event,
  */
 static struct notifier_block ipv6_dev_notf = {
 	.notifier_call = addrconf_notify,
+	.priority = ADDRCONF_NOTIFY_PRIORITY,
 };
 
 static void addrconf_type_change(struct net_device *dev, unsigned long event)
@@ -5381,6 +5385,8 @@ int __init addrconf_init(void)
 	rtnl_unlock();
 	if (err)
 		goto errlo;
+
+	ip6_route_init_special_entries();
 
 	for (i = 0; i < IN6_ADDR_HSIZE; i++)
 		INIT_HLIST_HEAD(&inet6_addr_lst[i]);
