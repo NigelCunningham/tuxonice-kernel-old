@@ -504,12 +504,21 @@ struct bcmgenet_hw_params {
 	u32		flags;
 };
 
+struct bcmgenet_skb_cb {
+	struct enet_cb *first_cb;	/* First control block of SKB */
+	struct enet_cb *last_cb;	/* Last control block of SKB */
+	unsigned int bytes_sent;	/* bytes on the wire (no TSB) */
+};
+
+#define GENET_CB(skb)	((struct bcmgenet_skb_cb *)((skb)->cb))
+
 struct bcmgenet_tx_ring {
 	spinlock_t	lock;		/* ring lock */
 	unsigned int	index;		/* ring index */
 	unsigned int	queue;		/* queue index */
 	struct enet_cb	*cbs;		/* tx ring buffer control block*/
 	unsigned int	size;		/* size of each tx ring */
+	unsigned int    clean_ptr;      /* Tx ring clean pointer */
 	unsigned int	c_index;	/* last consumer index of each ring*/
 	unsigned int	free_bds;	/* # of free bds for each ring */
 	unsigned int	write_ptr;	/* Tx ring write pointer SW copy */

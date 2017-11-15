@@ -509,6 +509,9 @@ static void hhf_destroy(struct Qdisc *sch)
 		hhf_free(q->hhf_valid_bits[i]);
 	}
 
+	if (!q->hh_flows)
+		return;
+
 	for (i = 0; i < HH_FLOWS_CNT; i++) {
 		struct hh_flow_state *flow, *next;
 		struct list_head *head = &q->hh_flows[i];
@@ -644,7 +647,9 @@ static int hhf_init(struct Qdisc *sch, struct nlattr *opt)
 			q->hhf_arrays[i] = hhf_zalloc(HHF_ARRAYS_LEN *
 						      sizeof(u32));
 			if (!q->hhf_arrays[i]) {
-				hhf_destroy(sch);
+				/* Note: hhf_destroy() will be called
+				 * by our caller.
+				 */
 				return -ENOMEM;
 			}
 		}
@@ -655,7 +660,9 @@ static int hhf_init(struct Qdisc *sch, struct nlattr *opt)
 			q->hhf_valid_bits[i] = hhf_zalloc(HHF_ARRAYS_LEN /
 							  BITS_PER_BYTE);
 			if (!q->hhf_valid_bits[i]) {
-				hhf_destroy(sch);
+				/* Note: hhf_destroy() will be called
+				 * by our caller.
+				 */
 				return -ENOMEM;
 			}
 		}
