@@ -1718,7 +1718,7 @@ static int pf_interception(struct vcpu_svm *svm)
 	case KVM_PV_REASON_PAGE_NOT_PRESENT:
 		svm->apf_reason = 0;
 		local_irq_disable();
-		kvm_async_pf_task_wait(fault_address);
+		kvm_async_pf_task_wait(fault_address, 0);
 		local_irq_enable();
 		break;
 	case KVM_PV_REASON_PAGE_READY:
@@ -4248,6 +4248,7 @@ static int svm_check_intercept(struct kvm_vcpu *vcpu,
 		 */
 		if (info->rep_prefix != REPE_PREFIX)
 			goto out;
+		break;
 	case SVM_EXIT_IOIO: {
 		u64 exit_info;
 		u32 bytes;

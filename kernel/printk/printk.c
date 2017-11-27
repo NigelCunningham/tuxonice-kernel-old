@@ -48,6 +48,7 @@
 #include <linux/utsname.h>
 
 #include <asm/uaccess.h>
+#include <asm-generic/sections.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/printk.h>
@@ -2562,12 +2563,33 @@ int unregister_console(struct console *console)
 }
 EXPORT_SYMBOL(unregister_console);
 
+/*
+ * Some boot consoles access data that is in the init section and which will
+ * be discarded after the initcalls have been run. To make sure that no code
+ * will access this data, unregister the boot consoles in a late initcall.
+ *
+ * If for some reason, such as deferred probe or the driver being a loadable
+ * module, the real console hasn't registered yet at this point, there will
+ * be a brief interval in which no messages are logged to the console, which
+ * makes it difficult to diagnose problems that occur during this time.
+ *
+ * To mitigate this problem somewhat, only unregister consoles whose memory
+ * intersects with the init section. Note that all other boot consoles will
+ * get unregistred when the real preferred console is registered.
+ */
 static int __init printk_late_init(void)
 {
 	struct console *con;
 
 	for_each_console(con) {
-		if (!keep_bootcon && con->flags & CON_BOOT) {
+		if ((con->flags & CON_BOOT) &&
+		    init_section_intersects(con, sizeof(*con))) {
+			/*
+			 * Please, consider moving the reported consoles out
+			 * of the init section.
+			 */
+			pr_warn("bootconsole [%s%d] uses init memory and must be disabled even before the real one is ready\n",
+				con->name, con->index);
 			unregister_console(con);
 		}
 	}
