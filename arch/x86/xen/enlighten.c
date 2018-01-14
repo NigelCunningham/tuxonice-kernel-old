@@ -430,6 +430,12 @@ static void __init xen_init_cpuid_mask(void)
 		~((1 << X86_FEATURE_MTRR) |  /* disable MTRR */
 		  (1 << X86_FEATURE_ACC));   /* thermal monitoring */
 
+	/*
+	 * Xen PV would need some work to support PCID: CR3 handling as well
+	 * as xen_flush_tlb_others() would need updating.
+	 */
+	cpuid_leaf1_ecx_mask &= ~(1 << (X86_FEATURE_PCID % 32));  /* disable PCID */
+
 	if (!xen_initial_domain())
 		cpuid_leaf1_edx_mask &=
 			~((1 << X86_FEATURE_ACPI));  /* disable ACPI */
@@ -1526,10 +1532,10 @@ static void xen_pvh_set_cr_flags(int cpu)
 	 * set them here. For all, OSFXSR OSXMMEXCPT are set in fpu_init.
 	*/
 	if (cpu_has_pse)
-		set_in_cr4(X86_CR4_PSE);
+		cr4_set_bits_and_update_boot(X86_CR4_PSE);
 
 	if (cpu_has_pge)
-		set_in_cr4(X86_CR4_PGE);
+		cr4_set_bits_and_update_boot(X86_CR4_PGE);
 }
 
 /*

@@ -32,7 +32,7 @@
 #include <linux/init.h>
 #include <linux/uaccess.h>
 #include <linux/highmem.h>
-#include <asm/mmu_context.h>
+#include <linux/mmu_context.h>
 #include <linux/interrupt.h>
 #include <linux/capability.h>
 #include <linux/completion.h>
@@ -2374,7 +2374,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 		atomic_inc(&oldmm->mm_count);
 		enter_lazy_tlb(oldmm, next);
 	} else
-		switch_mm(oldmm, mm, next);
+		switch_mm_irqs_off(oldmm, mm, next);
 
 	if (!prev->mm) {
 		prev->active_mm = NULL;
@@ -5782,14 +5782,14 @@ enum s_alloc {
 static void
 build_group_mask(struct sched_domain *sd, struct sched_group *sg, struct cpumask *mask)
 {
-	const struct cpumask *span = sched_domain_span(sd);
+	const struct cpumask *sg_span = sched_group_cpus(sg);
 	struct sd_data *sdd = sd->private;
 	struct sched_domain *sibling;
 	int i;
 
 	cpumask_clear(mask);
 
-	for_each_cpu(i, span) {
+	for_each_cpu(i, sg_span) {
 		sibling = *per_cpu_ptr(sdd->sd, i);
 
 		/*
@@ -5801,7 +5801,7 @@ build_group_mask(struct sched_domain *sd, struct sched_group *sg, struct cpumask
 			continue;
 
 		/* If we would not end up here, we can't continue from here */
-		if (!cpumask_equal(span, sched_domain_span(sibling->child)))
+		if (!cpumask_equal(sg_span, sched_domain_span(sibling->child)))
 			continue;
 
 		cpumask_set_cpu(i, mask);
@@ -5869,7 +5869,7 @@ static void init_overlap_sched_group(struct sched_domain *sd,
 static int
 build_overlap_sched_groups(struct sched_domain *sd, int cpu)
 {
-	struct sched_group *first = NULL, *last = NULL, *groups = NULL, *sg;
+	struct sched_group *first = NULL, *last = NULL, *sg;
 	const struct cpumask *span = sched_domain_span(sd);
 	struct cpumask *covered = sched_domains_tmpmask;
 	struct sd_data *sdd = sd->private;
@@ -5899,15 +5899,6 @@ build_overlap_sched_groups(struct sched_domain *sd, int cpu)
 
 		init_overlap_sched_group(sd, sg);
 
-		/*
-		 * Make sure the first group of this domain contains the
-		 * canonical balance cpu. Otherwise the sched_domain iteration
-		 * breaks. See update_sg_lb_stats().
-		 */
-		if ((!groups && cpumask_test_cpu(cpu, sg_span)) ||
-		    group_balance_cpu(sg) == cpu)
-			groups = sg;
-
 		if (!first)
 			first = sg;
 		if (last)
@@ -5915,7 +5906,7 @@ build_overlap_sched_groups(struct sched_domain *sd, int cpu)
 		last = sg;
 		last->next = first;
 	}
-	sd->groups = groups;
+	sd->groups = first;
 
 	return 0;
 
@@ -6631,7 +6622,7 @@ static int build_sched_domains(const struct cpumask *cpu_map,
 			sd = build_sched_domain(tl, cpu_map, attr, sd, i);
 			if (tl == sched_domain_topology)
 				*per_cpu_ptr(d.sd, i) = sd;
-			if (tl->flags & SDTL_OVERLAP || sched_feat(FORCE_SD_OVERLAP))
+			if (tl->flags & SDTL_OVERLAP)
 				sd->flags |= SD_OVERLAP;
 			if (cpumask_equal(cpu_map, sched_domain_span(sd)))
 				break;

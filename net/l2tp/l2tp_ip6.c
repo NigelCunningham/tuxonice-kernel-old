@@ -133,6 +133,7 @@ static int l2tp_ip6_recv(struct sk_buff *skb)
 	unsigned char *ptr, *optr;
 	struct l2tp_session *session;
 	struct l2tp_tunnel *tunnel = NULL;
+	struct ipv6hdr *iph;
 	int length;
 
 	if (!pskb_may_pull(skb, 4))
@@ -189,22 +190,16 @@ pass_up:
 		goto discard;
 
 	tunnel_id = ntohl(*(__be32 *) &skb->data[4]);
-	tunnel = l2tp_tunnel_find(&init_net, tunnel_id);
-	if (tunnel != NULL)
-		sk = tunnel->sock;
-	else {
-		struct ipv6hdr *iph = ipv6_hdr(skb);
+	iph = ipv6_hdr(skb);
 
-		read_lock_bh(&l2tp_ip6_lock);
-		sk = __l2tp_ip6_bind_lookup(&init_net, &iph->daddr,
-					    0, tunnel_id);
+	read_lock_bh(&l2tp_ip6_lock);
+	sk = __l2tp_ip6_bind_lookup(&init_net, &iph->daddr, 0, tunnel_id);
+	if (!sk) {
 		read_unlock_bh(&l2tp_ip6_lock);
-	}
-
-	if (sk == NULL)
 		goto discard;
-
+	}
 	sock_hold(sk);
+	read_unlock_bh(&l2tp_ip6_lock);
 
 	if (!xfrm6_policy_check(sk, XFRM_POLICY_IN, skb))
 		goto discard_put;
