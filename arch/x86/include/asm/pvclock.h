@@ -4,6 +4,15 @@
 #include <linux/clocksource.h>
 #include <asm/pvclock-abi.h>
 
+#ifdef CONFIG_PARAVIRT_CLOCK
+extern struct pvclock_vsyscall_time_info *pvclock_pvti_cpu0_va(void);
+#else
+static inline struct pvclock_vsyscall_time_info *pvclock_pvti_cpu0_va(void)
+{
+	return NULL;
+}
+#endif
+
 /* some helper functions for xen and kvm pv clock sources */
 cycle_t pvclock_clocksource_read(struct pvclock_vcpu_time_info *src);
 u8 pvclock_read_flags(struct pvclock_vcpu_time_info *src);
@@ -95,14 +104,8 @@ unsigned __pvclock_read_cycles(const struct pvclock_vcpu_time_info *src,
 
 struct pvclock_vsyscall_time_info {
 	struct pvclock_vcpu_time_info pvti;
-	u32 migrate_count;
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
 #define PVTI_SIZE sizeof(struct pvclock_vsyscall_time_info)
-#define PVCLOCK_VSYSCALL_NR_PAGES (((NR_CPUS-1)/(PAGE_SIZE/PVTI_SIZE))+1)
-
-int __init pvclock_init_vsyscall(struct pvclock_vsyscall_time_info *i,
-				 int size);
-struct pvclock_vcpu_time_info *pvclock_get_vsyscall_time_info(int cpu);
 
 #endif /* _ASM_X86_PVCLOCK_H */

@@ -195,6 +195,8 @@ static int kaiser_add_user_map(const void *__start_addr, unsigned long size,
 	 * requires that not to be #defined to 0): so mask it off here.
 	 */
 	flags &= ~_PAGE_GLOBAL;
+	if (!(__supported_pte_mask & _PAGE_NX))
+		flags &= ~_PAGE_NX;
 
 	for (; address < end_addr; address += PAGE_SIZE) {
 		target_address = get_pa_from_mapping(address);
@@ -322,7 +324,7 @@ silent_disable:
  */
 void __init kaiser_init(void)
 {
-	int cpu, idx;
+	int cpu;
 
 	if (!kaiser_enabled)
 		return;
@@ -428,7 +430,8 @@ pgd_t kaiser_set_shadow_pgd(pgd_t *pgdp, pgd_t pgd)
 			 * get out to userspace running on the kernel CR3,
 			 * userspace will crash instead of running.
 			 */
-			pgd.pgd |= _PAGE_NX;
+			if (__supported_pte_mask & _PAGE_NX)
+				pgd.pgd |= _PAGE_NX;
 		}
 	} else if (!pgd.pgd) {
 		/*
