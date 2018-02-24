@@ -135,12 +135,8 @@ static void pageset2_full(void)
         mapping = page_mapping(page);
         if (!mapping || !mapping->host ||
             !(mapping->host->i_flags & S_ATOMIC_COPY)) {
-          if (PageTOI_RO(page) && test_result_state(TOI_KEPT_IMAGE)) {
-            TOI_TRACE_DEBUG(page_to_pfn(page), "_Pageset2 unmodified.");
-          } else {
             TOI_TRACE_DEBUG(page_to_pfn(page), "_Pageset2 pageset2_full.");
             SetPagePageset2(page);
-          }
         }
       }
     }
@@ -188,11 +184,6 @@ static void toi_mark_task_as_pageset(struct task_struct *t, int pageset2)
       if (mapping && mapping->host &&
           mapping->host->i_flags & S_ATOMIC_COPY && pageset2)
         continue;
-
-      if (PageTOI_RO(page) && test_result_state(TOI_KEPT_IMAGE)) {
-        TOI_TRACE_DEBUG(page_to_pfn(page), "_Unmodified %d", pageset2 ? 1 : 2);
-        continue;
-      }
 
       if (pageset2) {
         TOI_TRACE_DEBUG(page_to_pfn(page), "_MarkTaskAsPageset 1");
@@ -739,12 +730,6 @@ static void flag_image_pages(int atomic_copy)
       if (!page) {
         TOI_TRACE_DEBUG(pfn, "_Flag Nosave2");
         num_nosave++;
-        continue;
-      }
-
-      if (PageTOI_RO(page) && test_result_state(TOI_KEPT_IMAGE)) {
-        TOI_TRACE_DEBUG(pfn, "_Unmodified");
-        num_unmodified++;
         continue;
       }
 

@@ -5,8 +5,6 @@ ccflags-$(CONFIG_PM_DEBUG)	:= -DDEBUG
 tuxonice_core-y := tuxonice_modules.o
 
 obj-$(CONFIG_TOI)		+= tuxonice_builtin.o
-obj-$(CONFIG_TOI_INCREMENTAL)   += tuxonice_incremental.o \
-    tuxonice_copy_before_write.o
 
 tuxonice_core-$(CONFIG_PM_DEBUG)	+= tuxonice_alloc.o
 

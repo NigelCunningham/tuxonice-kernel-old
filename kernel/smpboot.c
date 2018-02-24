@@ -175,7 +175,7 @@ __smpboot_create_thread(struct smp_hotplug_thread *ht, unsigned int cpu)
 	if (tsk)
 		return 0;
 
-	td = kzalloc_node(sizeof(*td), GFP_KERNEL | ___GFP_TOI_NOTRACK, cpu_to_node(cpu));
+	td = kzalloc_node(sizeof(*td), GFP_KERNEL, cpu_to_node(cpu));
 	if (!td)
 		return -ENOMEM;
 	td->cpu = cpu;

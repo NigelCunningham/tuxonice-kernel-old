@@ -402,94 +402,6 @@ static int get_toi_debug_info(const char *buffer, int count)
   return len;
 }
 
-#ifdef CONFIG_TOI_INCREMENTAL
-/**
- * get_toi_page_state - fill a buffer with page state information
- * @buffer:        The buffer to be filled.
- * @count:        The size of the buffer, in bytes.
- *
- * Fill a (usually PAGE_SIZEd) buffer with the debugging info that we will
- * either printk or return via sysfs.
- **/
-static int get_toi_page_state(const char *buffer, int count)
-{
-  int free = 0, untracked = 0, dirty = 0, ro = 0, invalid = 0, other = 0, total = 0;
-  int len = 0;
-  struct zone *zone;
-  int allocated_bitmaps = 0;
-
-  set_cpus_allowed_ptr(current,
-      cpumask_of(cpumask_first(cpu_online_mask)));
-
-  if (!free_map) {
-    BUG_ON(toi_alloc_bitmap(&free_map));
-    allocated_bitmaps = 1;
-  }
-
-  toi_generate_free_page_map();
-
-  for_each_populated_zone(zone) {
-    unsigned long loop;
-
-    total += zone->spanned_pages;
-
-    for (loop = 0; loop < zone->spanned_pages; loop++) {
-      unsigned long pfn = zone->zone_start_pfn + loop;
-      struct page *page;
-      int chunk_size;
-
-      if (!pfn_valid(pfn)) {
-        continue;
-      }
-
-      chunk_size = toi_size_of_free_region(zone, pfn);
-      if (chunk_size) {
-        /*
-         * If the page gets allocated, it will be need
-         * saving in an image.
-         * Don't bother with explicitly removing any
-         * RO protection applied below.
-         * We'll SetPageTOI_Dirty(page) if/when it
-         * gets allocated.
-         */
-        free += chunk_size;
-        loop += chunk_size - 1;
-        continue;
-      }
-
-      page = pfn_to_page(pfn);
-
-      if (PageTOI_Untracked(page)) {
-        untracked++;
-      } else if (PageTOI_RO(page)) {
-        ro++;
-      } else if (PageTOI_Dirty(page)) {
-        dirty++;
-      } else {
-        printk("Page %ld state 'other'.\n", pfn);
-        other++;
-      }
-    }
-  }
-
-  if (allocated_bitmaps) {
-    toi_free_bitmap(&free_map);
-  }
-
-  set_cpus_allowed_ptr(current, cpu_all_mask);
-
-  SNPRINTF("TuxOnIce page breakdown:\n");
-  SNPRINTF("- Free           : %d\n", free);
-  SNPRINTF("- Untracked      : %d\n", untracked);
-  SNPRINTF("- Read only      : %d\n", ro);
-  SNPRINTF("- Dirty          : %d\n", dirty);
-  SNPRINTF("- Other          : %d\n", other);
-  SNPRINTF("- Invalid        : %d\n", invalid);
-  SNPRINTF("- Total          : %d\n", total);
-  return len;
-}
-#endif
-
 /**
  * do_cleanup - cleanup after attempting to hibernate or resume
  * @get_debug_info:        Whether to allocate and return debugging info.
@@ -550,12 +462,6 @@ static void do_cleanup(int get_debug_info, int restarting)
         "to Keep Image or Incremental Image being enabled.");
     set_result_state(TOI_KEPT_IMAGE);
 
-    /*
-     * For an incremental image, free unused storage so
-     * swap (if any) can be used for normal system operation,
-     * if so desired.
-     */
-
     toiActiveAllocator->free_unused_storage();
   } else
     if (toiActiveAllocator)
@@ -605,18 +511,10 @@ static void do_cleanup(int get_debug_info, int restarting)
 static int check_still_keeping_image(void)
 {
   if (toi_keeping_image) {
-    if (!test_action_state(TOI_INCREMENTAL_IMAGE)) {
       printk(KERN_INFO "Image already stored: powering down "
           "immediately.");
       do_toi_step(STEP_HIBERNATE_POWERDOWN);
       return 1;
-    }
-    /**
-     * Incremental image - need to write new part.
-     * We detect that we're writing an incremental image by looking
-     * at test_result_state(TOI_KEPT_IMAGE)
-     **/
-    return 0;
   }
 
   printk(KERN_INFO "Invalidating previous image.\n");
@@ -900,8 +798,8 @@ static int do_prepare_image(void)
     return 1;
 
   /*
-   * If kept image and still keeping image and hibernating to RAM, (non
-   * incremental image case) we will return 1 after hibernating and
+   * If kept image and still keeping image and hibernating to RAM,
+   * we will return 1 after hibernating and
    * resuming (provided the power doesn't run out. In that case, we skip
    * directly to cleaning up and exiting.
    */
@@ -1363,12 +1261,6 @@ static struct toi_sysfs_data sysfs_params[] = {
 #ifdef CONFIG_TOI_KEEP_IMAGE
   SYSFS_BIT("keep_image", SYSFS_RW , &toi_bkd.toi_action, TOI_KEEP_IMAGE,
       0),
-#endif
-#ifdef CONFIG_TOI_INCREMENTAL
-  SYSFS_CUSTOM("pagestate", SYSFS_READONLY, get_toi_page_state, NULL, 0,
-      NULL),
-  SYSFS_BIT("incremental", SYSFS_RW, &toi_bkd.toi_action,
-      TOI_INCREMENTAL_IMAGE, 1),
 #endif
 };
 

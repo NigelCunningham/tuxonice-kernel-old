@@ -123,7 +123,6 @@ static int pcpu_nr_units __ro_after_init;
 static int pcpu_atom_size __ro_after_init;
 int pcpu_nr_slots __ro_after_init;
 static size_t pcpu_chunk_struct_size __ro_after_init;
-static int pcpu_pfns;
 
 /* cpus with the lowest and highest unit addresses */
 static unsigned int pcpu_low_unit_cpu __ro_after_init;
@@ -2257,7 +2256,6 @@ static struct pcpu_alloc_info * __init pcpu_build_alloc_info(
 	/* calculate size_sum and ensure dyn_size is enough for early alloc */
 	size_sum = PFN_ALIGN(static_size + reserved_size +
 			    max_t(size_t, dyn_size, PERCPU_DYNAMIC_EARLY_SIZE));
-        pcpu_pfns = PFN_DOWN(size_sum);
 	dyn_size = size_sum - static_size - reserved_size;
 
 	/*

@@ -135,22 +135,6 @@ menuconfig TOI_CORE
 	comment "General Options"
 		depends on TOI_CORE
 
-	config TOI_PRUNE
-		bool "Image pruning support"
-		depends on TOI_CORE && CRYPTO && BROKEN
-		default y
-		---help---
-		  This option adds support for using cryptoapi hashing
-		  algorithms to identify pages with the same content. We
-		  then write a much smaller pointer to the first copy of
-		  the data instead of a complete (perhaps compressed)
-                  additional copy.
-
-		  You probably want this, so say Y here.
-
-	comment "No image pruning support available without Cryptoapi support."
-		depends on TOI_CORE && !CRYPTO
-
 	config TOI_CRYPTO
 		bool "Compression support"
 		depends on TOI_CORE && CRYPTO
@@ -207,30 +191,6 @@ menuconfig TOI_CORE
 		  bit. Keep image mode is a little less user friendly on purpose - it
 		  should not be used without thought!
 
-	config TOI_INCREMENTAL
-		bool "Incremental Image Support"
-		depends on TOI_CORE && 64BIT && TOI_KEEP_IMAGE
-		default n
-		---help---
-		  This option enables the work in progress toward using the dirty page
-		  tracking to record changes to pages. It is hoped that
-		  this will be an initial step toward implementing storing just
-		  the differences between consecutive images, which will
-		  increase the amount of storage needed for the image, but also
-		  increase the speed at which writing an image occurs and
-		  reduce the wear and tear on drives.
-
-		  At the moment, all that is implemented is the first step of keeping
-		  an existing image and then comparing it to the contents in memory
-		  (by setting /sys/power/tuxonice/verify_image to 1 and triggering a
-		  (fake) resume) to see what the page change tracking should find to be
-		  different. If you have verify_image set to 1, TuxOnIce will automatically
-		  invalidate the old image when you next try to hibernate, so there's no
-		  greater chance of disk corruption than normal.
-
-	comment "No incremental image support available without Keep Image support."
-		depends on TOI_CORE && !TOI_KEEP_IMAGE && 64BIT
-
 	config TOI_REPLACE_SWSUSP
 		bool "Replace swsusp by default"
 		default y
@@ -265,65 +225,6 @@ menuconfig TOI_CORE
 		  Note that if TuxOnIce can't resume at the earlier opportunity, the
 		  value of this option won't matter - the initramfs/initrd (if any) will
 		  run anyway.
-
-	menuconfig TOI_CLUSTER
-		bool "Cluster support"
-		default n
-		depends on TOI_CORE && NET && BROKEN
-		---help---
-		  Support for linking multiple machines in a cluster so that they suspend
-		  and resume together.
-
-	config TOI_DEFAULT_CLUSTER_INTERFACE
-		string "Default cluster interface"
-		depends on TOI_CLUSTER
-		---help---
-		  The default interface on which to communicate with other nodes in
-		  the cluster.
-
-		  If no value is set here, cluster support will be disabled by default.
-
-	config TOI_DEFAULT_CLUSTER_KEY
-		string "Default cluster key"
-		default "Default"
-		depends on TOI_CLUSTER
-		---help---
-		  The default key used by this node. All nodes in the same cluster
-		  have the same key. Multiple clusters may coexist on the same lan
-		  by using different values for this key.
-
-	config TOI_CLUSTER_IMAGE_TIMEOUT
-		int "Timeout when checking for image"
-		default 15
-		depends on TOI_CLUSTER
-		---help---
-		  Timeout (seconds) before continuing to boot when waiting to see
-		  whether other nodes might have an image. Set to -1 to wait
-		  indefinitely. In WAIT_UNTIL_NODES is non zero, we might continue
-		  booting sooner than this timeout.
-
-	config TOI_CLUSTER_WAIT_UNTIL_NODES
-		int "Nodes without image before continuing"
-		default 0
-		depends on TOI_CLUSTER
-		---help---
-		  When booting and no image is found, we wait to see if other nodes
-		  have an image before continuing to boot. This value lets us
-		  continue after seeing a certain number of nodes without an image,
-		  instead of continuing to wait for the timeout. Set to 0 to only
-		  use the timeout.
-
-	config TOI_DEFAULT_CLUSTER_PRE_HIBERNATE
-		string "Default pre-hibernate script"
-		depends on TOI_CLUSTER
-		---help---
-		  The default script to be called when starting to hibernate.
-
-	config TOI_DEFAULT_CLUSTER_POST_HIBERNATE
-		string "Default post-hibernate script"
-		depends on TOI_CLUSTER
-		---help---
-		  The default script to be called after resuming from hibernation.
 
 	config TOI_DEFAULT_WAIT
 		int "Default waiting time for emergency boot messages"

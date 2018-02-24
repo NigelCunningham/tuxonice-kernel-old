@@ -32,8 +32,6 @@
 #include <linux/bootmem.h>
 #include <linux/memblock.h>
 #include <linux/syscalls.h>
-#include <linux/suspend.h>
-#include <linux/kexec.h>
 #include <linux/crash_core.h>
 #include <linux/kdb.h>
 #include <linux/ratelimit.h>
@@ -437,20 +435,6 @@ static u32 clear_idx;
 static char __log_buf[__LOG_BUF_LEN] __aligned(LOG_ALIGN);
 static char *log_buf = __log_buf;
 static u32 log_buf_len = __LOG_BUF_LEN;
-
-#ifdef CONFIG_TOI_INCREMENTAL
-void toi_set_logbuf_untracked(void)
-{
-    int i;
-    struct page *log_buf_start_page = virt_to_page(__log_buf);
-
-    printk("Not protecting kernel printk log buffer (%p-%p).\n",
-            __log_buf, __log_buf + __LOG_BUF_LEN);
-
-    for (i = 0; i < (1 << (CONFIG_LOG_BUF_SHIFT - PAGE_SHIFT)); i++)
-        SetPageTOI_Untracked(log_buf_start_page + i);
-}
-#endif
 
 /* Return log buffer address */
 char *log_buf_addr_get(void)
