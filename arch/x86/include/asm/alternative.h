@@ -1,6 +1,8 @@
 #ifndef _ASM_X86_ALTERNATIVE_H
 #define _ASM_X86_ALTERNATIVE_H
 
+#ifndef __ASSEMBLY__
+
 #include <linux/types.h>
 #include <linux/stddef.h>
 #include <linux/stringify.h>
@@ -96,13 +98,21 @@ static inline int alternatives_text_reserved(void *start, void *end)
 	alt_end_marker ":\n"
 
 /*
+ * max without conditionals. Idea adapted from:
+ * http://graphics.stanford.edu/~seander/bithacks.html#IntegerMinOrMax
+ *
+ * The additional "-" is needed because gas works with s32s.
+ */
+#define alt_max_short(a, b)	"((" a ") ^ (((" a ") ^ (" b ")) & -(-((" a ") - (" b ")))))"
+
+/*
  * Pad the second replacement alternative with additional NOPs if it is
  * additionally longer than the first replacement alternative.
  */
-#define OLDINSTR_2(oldinstr, num1, num2)					\
-	__OLDINSTR(oldinstr, num1)						\
-	".skip -(((" alt_rlen(num2) ")-(" alt_rlen(num1) ")-(662b-661b)) > 0) * " \
-		"((" alt_rlen(num2) ")-(" alt_rlen(num1) ")-(662b-661b)),0x90\n"  \
+#define OLDINSTR_2(oldinstr, num1, num2) \
+	"661:\n\t" oldinstr "\n662:\n"								\
+	".skip -((" alt_max_short(alt_rlen(num1), alt_rlen(num2)) " - (" alt_slen ")) > 0) * "	\
+		"(" alt_max_short(alt_rlen(num1), alt_rlen(num2)) " - (" alt_slen ")), 0x90\n"	\
 	alt_end_marker ":\n"
 
 #define ALTINSTR_ENTRY(feature, num)					      \
@@ -124,7 +134,7 @@ static inline int alternatives_text_reserved(void *start, void *end)
 	".popsection\n"							\
 	".pushsection .altinstr_replacement, \"ax\"\n"			\
 	ALTINSTR_REPLACEMENT(newinstr, feature, 1)			\
-	".popsection"
+	".popsection\n"
 
 #define ALTERNATIVE_2(oldinstr, newinstr1, feature1, newinstr2, feature2)\
 	OLDINSTR_2(oldinstr, 1, 2)					\
@@ -135,7 +145,7 @@ static inline int alternatives_text_reserved(void *start, void *end)
 	".pushsection .altinstr_replacement, \"ax\"\n"			\
 	ALTINSTR_REPLACEMENT(newinstr1, feature1, 1)			\
 	ALTINSTR_REPLACEMENT(newinstr2, feature2, 2)			\
-	".popsection"
+	".popsection\n"
 
 /*
  * This must be included *after* the definition of ALTERNATIVE due to
@@ -242,5 +252,7 @@ extern void *text_poke_early(void *addr, const void *opcode, size_t len);
 extern void *text_poke(void *addr, const void *opcode, size_t len);
 extern int poke_int3_handler(struct pt_regs *regs);
 extern void *text_poke_bp(void *addr, const void *opcode, size_t len, void *handler);
+
+#endif /* __ASSEMBLY__ */
 
 #endif /* _ASM_X86_ALTERNATIVE_H */
