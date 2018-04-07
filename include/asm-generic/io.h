@@ -1,4 +1,4 @@
-/* Generic I/O port emulation, based on MN10300 code
+/* Generic I/O port emulation.
  *
  * Copyright (C) 2007 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
@@ -350,6 +350,8 @@ static inline void writesq(volatile void __iomem *addr, const void *buffer,
 #ifndef IO_SPACE_LIMIT
 #define IO_SPACE_LIMIT 0xffff
 #endif
+
+#include <linux/logic_pio.h>
 
 /*
  * {in,out}{b,w,l}() access little endian I/O. {in,out}{b,w,l}_p() can be
@@ -852,7 +854,16 @@ static inline void __iomem *__ioremap(phys_addr_t offset, size_t size,
 }
 #endif
 
+#ifndef iounmap
+#define iounmap iounmap
+
+static inline void iounmap(void __iomem *addr)
+{
+}
+#endif
+#endif /* CONFIG_MMU */
 #ifndef ioremap_nocache
+void __iomem *ioremap(phys_addr_t phys_addr, size_t size);
 #define ioremap_nocache ioremap_nocache
 static inline void __iomem *ioremap_nocache(phys_addr_t offset, size_t size)
 {
@@ -884,22 +895,13 @@ static inline void __iomem *ioremap_wt(phys_addr_t offset, size_t size)
 }
 #endif
 
-#ifndef iounmap
-#define iounmap iounmap
-
-static inline void iounmap(void __iomem *addr)
-{
-}
-#endif
-#endif /* CONFIG_MMU */
-
 #ifdef CONFIG_HAS_IOPORT_MAP
 #ifndef CONFIG_GENERIC_IOMAP
 #ifndef ioport_map
 #define ioport_map ioport_map
 static inline void __iomem *ioport_map(unsigned long port, unsigned int nr)
 {
-	return PCI_IOBASE + (port & IO_SPACE_LIMIT);
+	return PCI_IOBASE + (port & MMIO_UPPER_LIMIT);
 }
 #endif
 

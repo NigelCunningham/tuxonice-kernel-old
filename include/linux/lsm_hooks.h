@@ -906,6 +906,33 @@
  *	associated with the TUN device's security structure.
  *	@security pointer to the TUN devices's security structure.
  *
+ * Security hooks for SCTP
+ *
+ * @sctp_assoc_request:
+ *	Passes the @ep and @chunk->skb of the association INIT packet to
+ *	the security module.
+ *	@ep pointer to sctp endpoint structure.
+ *	@skb pointer to skbuff of association packet.
+ *	Return 0 on success, error on failure.
+ * @sctp_bind_connect:
+ *	Validiate permissions required for each address associated with sock
+ *	@sk. Depending on @optname, the addresses will be treated as either
+ *	for a connect or bind service. The @addrlen is calculated on each
+ *	ipv4 and ipv6 address using sizeof(struct sockaddr_in) or
+ *	sizeof(struct sockaddr_in6).
+ *	@sk pointer to sock structure.
+ *	@optname name of the option to validate.
+ *	@address list containing one or more ipv4/ipv6 addresses.
+ *	@addrlen total length of address(s).
+ *	Return 0 on success, error on failure.
+ * @sctp_sk_clone:
+ *	Called whenever a new socket is created by accept(2) (i.e. a TCP
+ *	style socket) or when a socket is 'peeled off' e.g userspace
+ *	calls sctp_peeloff(3).
+ *	@ep pointer to current sctp endpoint structure.
+ *	@sk pointer to current sock structure.
+ *	@sk pointer to new sock structure.
+ *
  * Security hooks for Infiniband
  *
  * @ib_pkey_access:
@@ -1575,28 +1602,28 @@ union security_list_options {
 	int (*msg_msg_alloc_security)(struct msg_msg *msg);
 	void (*msg_msg_free_security)(struct msg_msg *msg);
 
-	int (*msg_queue_alloc_security)(struct msg_queue *msq);
-	void (*msg_queue_free_security)(struct msg_queue *msq);
-	int (*msg_queue_associate)(struct msg_queue *msq, int msqflg);
-	int (*msg_queue_msgctl)(struct msg_queue *msq, int cmd);
-	int (*msg_queue_msgsnd)(struct msg_queue *msq, struct msg_msg *msg,
+	int (*msg_queue_alloc_security)(struct kern_ipc_perm *msq);
+	void (*msg_queue_free_security)(struct kern_ipc_perm *msq);
+	int (*msg_queue_associate)(struct kern_ipc_perm *msq, int msqflg);
+	int (*msg_queue_msgctl)(struct kern_ipc_perm *msq, int cmd);
+	int (*msg_queue_msgsnd)(struct kern_ipc_perm *msq, struct msg_msg *msg,
 				int msqflg);
-	int (*msg_queue_msgrcv)(struct msg_queue *msq, struct msg_msg *msg,
+	int (*msg_queue_msgrcv)(struct kern_ipc_perm *msq, struct msg_msg *msg,
 				struct task_struct *target, long type,
 				int mode);
 
-	int (*shm_alloc_security)(struct shmid_kernel *shp);
-	void (*shm_free_security)(struct shmid_kernel *shp);
-	int (*shm_associate)(struct shmid_kernel *shp, int shmflg);
-	int (*shm_shmctl)(struct shmid_kernel *shp, int cmd);
-	int (*shm_shmat)(struct shmid_kernel *shp, char __user *shmaddr,
+	int (*shm_alloc_security)(struct kern_ipc_perm *shp);
+	void (*shm_free_security)(struct kern_ipc_perm *shp);
+	int (*shm_associate)(struct kern_ipc_perm *shp, int shmflg);
+	int (*shm_shmctl)(struct kern_ipc_perm *shp, int cmd);
+	int (*shm_shmat)(struct kern_ipc_perm *shp, char __user *shmaddr,
 				int shmflg);
 
-	int (*sem_alloc_security)(struct sem_array *sma);
-	void (*sem_free_security)(struct sem_array *sma);
-	int (*sem_associate)(struct sem_array *sma, int semflg);
-	int (*sem_semctl)(struct sem_array *sma, int cmd);
-	int (*sem_semop)(struct sem_array *sma, struct sembuf *sops,
+	int (*sem_alloc_security)(struct kern_ipc_perm *sma);
+	void (*sem_free_security)(struct kern_ipc_perm *sma);
+	int (*sem_associate)(struct kern_ipc_perm *sma, int semflg);
+	int (*sem_semctl)(struct kern_ipc_perm *sma, int cmd);
+	int (*sem_semop)(struct kern_ipc_perm *sma, struct sembuf *sops,
 				unsigned nsops, int alter);
 
 	int (*netlink_send)(struct sock *sk, struct sk_buff *skb);
@@ -1665,6 +1692,12 @@ union security_list_options {
 	int (*tun_dev_attach_queue)(void *security);
 	int (*tun_dev_attach)(struct sock *sk, void *security);
 	int (*tun_dev_open)(void *security);
+	int (*sctp_assoc_request)(struct sctp_endpoint *ep,
+				  struct sk_buff *skb);
+	int (*sctp_bind_connect)(struct sock *sk, int optname,
+				 struct sockaddr *address, int addrlen);
+	void (*sctp_sk_clone)(struct sctp_endpoint *ep, struct sock *sk,
+			      struct sock *newsk);
 #endif	/* CONFIG_SECURITY_NETWORK */
 
 #ifdef CONFIG_SECURITY_INFINIBAND
@@ -1914,6 +1947,9 @@ struct security_hook_heads {
 	struct list_head tun_dev_attach_queue;
 	struct list_head tun_dev_attach;
 	struct list_head tun_dev_open;
+	struct list_head sctp_assoc_request;
+	struct list_head sctp_bind_connect;
+	struct list_head sctp_sk_clone;
 #endif	/* CONFIG_SECURITY_NETWORK */
 #ifdef CONFIG_SECURITY_INFINIBAND
 	struct list_head ib_pkey_access;

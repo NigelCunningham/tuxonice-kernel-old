@@ -100,18 +100,7 @@ static int bdi_debug_stats_show(struct seq_file *m, void *v)
 
 	return 0;
 }
-
-static int bdi_debug_stats_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, bdi_debug_stats_show, inode->i_private);
-}
-
-static const struct file_operations bdi_debug_stats_fops = {
-	.open		= bdi_debug_stats_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
+DEFINE_SHOW_ATTRIBUTE(bdi_debug_stats);
 
 static int bdi_debug_register(struct backing_dev_info *bdi, const char *name)
 {
@@ -745,7 +734,6 @@ static void cgwb_bdi_unregister(struct backing_dev_info *bdi)
  */
 void wb_memcg_offline(struct mem_cgroup *memcg)
 {
-	LIST_HEAD(to_destroy);
 	struct list_head *memcg_cgwb_list = mem_cgroup_cgwb_list(memcg);
 	struct bdi_writeback *wb, *next;
 
@@ -764,7 +752,6 @@ void wb_memcg_offline(struct mem_cgroup *memcg)
  */
 void wb_blkcg_offline(struct blkcg *blkcg)
 {
-	LIST_HEAD(to_destroy);
 	struct bdi_writeback *wb, *next;
 
 	spin_lock_irq(&cgwb_lock);
