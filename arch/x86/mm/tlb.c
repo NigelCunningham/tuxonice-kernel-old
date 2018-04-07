@@ -28,6 +28,8 @@
  *	Implement flush IPI by CALL_FUNCTION_VECTOR, Alex Shi
  */
 
+#ifdef CONFIG_SMP
+
 struct flush_tlb_info {
 	struct mm_struct *flush_mm;
 	unsigned long flush_start;
@@ -153,23 +155,6 @@ void native_flush_tlb_others(const struct cpumask *cpumask,
 	smp_call_function_many(cpumask, flush_tlb_func, &info, 1);
 }
 
-void flush_tlb_current_task(void)
-{
-	struct mm_struct *mm = current->mm;
-
-	preempt_disable();
-
-	count_vm_tlb_event(NR_TLB_LOCAL_FLUSH_ALL);
-
-	/* This is an implicit full barrier that synchronizes with switch_mm. */
-	local_flush_tlb();
-
-	trace_tlb_flush(TLB_LOCAL_SHOOTDOWN, TLB_FLUSH_ALL);
-	if (cpumask_any_but(mm_cpumask(mm), smp_processor_id()) < nr_cpu_ids)
-		flush_tlb_others(mm_cpumask(mm), mm, 0UL, TLB_FLUSH_ALL);
-	preempt_enable();
-}
-
 /*
  * See Documentation/x86/tlb.txt for details.  We choose 33
  * because it is large enough to cover the vast majority (at
@@ -190,6 +175,12 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 	unsigned long base_pages_to_flush = TLB_FLUSH_ALL;
 
 	preempt_disable();
+
+	if ((end != TLB_FLUSH_ALL) && !(vmflag & VM_HUGETLB))
+		base_pages_to_flush = (end - start) >> PAGE_SHIFT;
+	if (base_pages_to_flush > tlb_single_page_flush_ceiling)
+		base_pages_to_flush = TLB_FLUSH_ALL;
+
 	if (current->active_mm != mm) {
 		/* Synchronize with switch_mm. */
 		smp_mb();
@@ -206,15 +197,11 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 		goto out;
 	}
 
-	if ((end != TLB_FLUSH_ALL) && !(vmflag & VM_HUGETLB))
-		base_pages_to_flush = (end - start) >> PAGE_SHIFT;
-
 	/*
 	 * Both branches below are implicit full barriers (MOV to CR or
 	 * INVLPG) that synchronize with switch_mm.
 	 */
-	if (base_pages_to_flush > tlb_single_page_flush_ceiling) {
-		base_pages_to_flush = TLB_FLUSH_ALL;
+	if (base_pages_to_flush == TLB_FLUSH_ALL) {
 		count_vm_tlb_event(NR_TLB_LOCAL_FLUSH_ALL);
 		local_flush_tlb();
 	} else {
@@ -346,3 +333,5 @@ static int __init create_tlb_single_page_flush_ceiling(void)
 	return 0;
 }
 late_initcall(create_tlb_single_page_flush_ceiling);
+
+#endif /* CONFIG_SMP */
